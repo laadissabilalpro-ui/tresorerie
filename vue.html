@@ -6,15 +6,19 @@
 <meta name="theme-color" content="#2B5FA8" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-<meta name="apple-mobile-web-app-title" content="Trésorerie" />
-<link rel="manifest" href="manifest.webmanifest" />
+<meta name="apple-mobile-web-app-title" content="Tréso · vue" />
 <link rel="apple-touch-icon" href="icon-192.png" />
 <link rel="stylesheet" href="styles.css" />
-<title>Trésorerie</title>
+<title>Trésorerie — Consultation</title>
+<!-- IMPORTANT : pas de <link rel="manifest"> ici.
+     Sans manifest, iOS conserve l'URL complète (vue.html?c=CODE) comme adresse de lancement
+     du raccourci écran d'accueil. Et cette page est en LECTURE SEULE par défaut (window.__TRESO_RO__),
+     donc même si le paramètre du code venait à être perdu, elle ne devient jamais modifiable. -->
 </head>
 <body>
 <div id="app"><div class="loading"><div class="spinner"></div><p>Chargement…</p></div></div>
 <div id="toast"></div>
+<script>window.__TRESO_RO__=1;</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="app.js"></script>
 </body>
