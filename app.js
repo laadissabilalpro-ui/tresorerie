@@ -620,7 +620,7 @@ document.addEventListener("click",function(ev){
   if(act==="resumeToday"){state.resumeDay=today();render();return;}
   if(act==="confirmYes"){if(state.confirm&&state.confirm.onYes)state.confirm.onYes();else{state.confirm=null;render();}return;}
   if(act==="confirmNo"){state.confirm=null;render();return;}
-  if(act==="onbCode"){var v=(document.getElementById("onb_code")||{}).value||"";v=v.trim();if(!v){showToast("Saisis un code");return;}state.code=v;lset("treso:code",v);loadCache();state.firstSyncDone=false;render();sync().then(function(){render();ensureRealtime();});return;}
+  if(act==="onbCode"){var v=(document.getElementById("onb_code")||{}).value||"";v=v.trim();if(!v){showToast("Saisis un code");return;}state.code=v;lset(state.readOnly?"treso:ro_code":"treso:code",v);loadCache();state.firstSyncDone=false;render();sync().then(function(){render();ensureRealtime();});return;}
   if(act==="onbSettings"){var ns=readSettingsForm();saveSettings(ns);state.view="home";render();sync().then(render);return;}
   if(act==="retrySync"){render();sync().then(function(){render();ensureRealtime();});return;}
   if(act==="changeCode"){state.code="";lset("treso:code","");state.settings=null;state.movements=[];render();return;}
@@ -639,10 +639,14 @@ window.addEventListener("offline",function(){updateSyncBadge();});
 /* ===================== DEMARRAGE ===================== */
 function start(){
   app=document.getElementById("app");
-  // Lecture seule : drapeau de page (vue.html) OU ?vue=/?lecture=/?c= OU mémoire locale
-  var ro=getParam("vue")||getParam("lecture")||getParam("c");
-  if(window.__TRESO_RO__||ro){state.readOnly=true;if(ro){state.code=(ro||"").trim();lset("treso:code",state.code);}lset("treso:ro","1");}
-  else if(lget("treso:ro","")==="1"){state.readOnly=true;}
+  // Lecture seule = page vue.html (window.__TRESO_RO__) OU paramètre ?vue=/?lecture=/?c=.
+  // JAMAIS persistée en drapeau global (sinon l'app d'édition du même navigateur passerait en lecture seule).
+  // Le code est mémorisé dans une clé SÉPARÉE selon le mode, pour qu'ils ne se contaminent pas.
+  var param=getParam("vue")||getParam("lecture")||getParam("c");
+  state.readOnly=!!(window.__TRESO_RO__||param);
+  var CK=state.readOnly?"treso:ro_code":"treso:code";
+  if(param){state.code=(param||"").trim();lset(CK,state.code);}
+  else{state.code=lget(CK,"");}
   if(state.code)loadCache();
   state.ready=true;
   render();
