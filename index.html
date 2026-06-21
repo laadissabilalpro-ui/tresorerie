@@ -9,6 +9,13 @@
 <meta name="apple-mobile-web-app-title" content="Trésorerie" />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" href="icon-192.png" />
+<script>
+/* iOS — mode consultation : si l'URL contient ?vue= ou ?lecture=, on retire le lien manifest
+   AVANT tout ajout à l'écran d'accueil. Sans manifest, iOS conserve l'URL complète (avec le code)
+   comme adresse de lancement du raccourci → l'app se relance bien en LECTURE SEULE.
+   L'icône et le nom restent gérés par les balises apple-* ci-dessus. */
+(function(){try{if(/[?&](vue|lecture)=/.test(location.search)){var l=document.querySelector('link[rel="manifest"]');if(l&&l.parentNode)l.parentNode.removeChild(l);var t=document.querySelector('meta[name="apple-mobile-web-app-title"]');if(t)t.setAttribute("content","Tréso · vue");}}catch(e){}})();
+</script>
 <title>Trésorerie</title>
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
