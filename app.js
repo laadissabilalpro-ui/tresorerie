@@ -449,33 +449,55 @@ function viewHome(){
 }
 
 function viewAdd(){
-  var f=state.form,isV=f.type==="VENTE",isR=f.type==="REMISE";
+  var f=state.form,isV=f.type==="VENTE",isR=f.type==="REMISE",isP=f.type==="REMB";
   var choices=[{id:"especes",label:"Espèces"},{id:"ca",label:isV?"CB":"Crédit Agricole",sub:isV?"Crédit Agricole":null},{id:"revolut",label:"Revolut"}];
   var h='<div class="view">';
   h+='<p class="section-title">Type de mouvement</p><div class="type-grid">';
   var ks=Object.keys(TYPES);
   for(var i=0;i<ks.length;i++){var t=TYPES[ks[i]];
-    h+='<button class="type-btn'+(f.type===t.id?" active":"")+(t.id==="RETRAIT"?" full2":"")+'" data-act="type" data-arg="'+t.id+'"><span class="sens-dot '+t.sens+'"></span>'+t.label+'</button>';
+    h+='<button class="type-btn'+(f.type===t.id?" active":"")+'" data-act="type" data-arg="'+t.id+'"><span class="sens-dot '+t.sens+'"></span>'+t.label+'</button>';
   }
+  h+='<button class="type-btn'+(isP?" active":"")+'" data-act="type" data-arg="REMB"><span class="sens-dot sortie"></span>Paiement dette</button>';
   h+='</div>';
-  if(isV){
-    h+='<p class="section-title">Canal d\'encaissement</p><div class="seg">';
-    for(var j=0;j<choices.length;j++){var c=choices[j];
-      h+='<button class="seg-btn'+(f.compte===c.id?" active":"")+'" data-act="compte" data-arg="'+c.id+'">'+c.label+(c.sub?'<small>'+c.sub+'</small>':"")+'</button>';
+  if(isP){
+    var open=activeDebts().filter(function(d){return !d.settled_day;});
+    h+='<p class="section-title">Quelle dette payer ?</p>';
+    if(!open.length){
+      h+='<div class="note-box">Aucune dette en cours. Ajoute-la d\'abord dans le registre (« Ce que je dois »).</div>';
+    }else{
+      h+='<div style="display:flex;flex-direction:column;gap:8px;">';
+      for(var p=0;p<open.length;p++){var dd=open[p];
+        h+='<button class="seg-btn'+(f.dette_id===dd.id?" active":"")+'" style="flex-direction:row;justify-content:space-between;align-items:center;" data-act="selDette" data-arg="'+dd.id+'"><span>'+esc(dd.label||"Dette")+'</span><span class="num" style="font-weight:700;">'+formatNum(dd.montant)+' €</span></button>';
+      }
+      h+='</div>';
+      h+='<p class="section-title">Payer depuis quel compte ?</p><div class="seg">';
+      for(var q=0;q<choices.length;q++){var cp=choices[q];
+        h+='<button class="seg-btn'+(f.compte===cp.id?" active":"")+'" data-act="compte" data-arg="'+cp.id+'">'+cp.label+'</button>';
+      }
+      h+='</div>';
+      var selD=findDette(f.dette_id);
+      if(selD)h+='<div class="note-box">Montant payé : <b>'+money(selD.montant)+'</b> — débité du compte choisi, et la dette passe en « réglée » automatiquement.</div>';
     }
-    h+='</div>';
-  }else if(isR){
-    h+='<p class="section-title">Sens du transfert</p><div class="transfer-box">Espèces <span class="arrow">→</span> Crédit Agricole</div>';
   }else{
-    h+='<p class="section-title">Compte à débiter</p><div class="seg">';
-    for(var k=0;k<choices.length;k++){var c2=choices[k];
-      h+='<button class="seg-btn'+(f.compte===c2.id?" active":"")+'" data-act="compte" data-arg="'+c2.id+'">'+c2.label+'</button>';
+    if(isV){
+      h+='<p class="section-title">Canal d\'encaissement</p><div class="seg">';
+      for(var j=0;j<choices.length;j++){var c=choices[j];
+        h+='<button class="seg-btn'+(f.compte===c.id?" active":"")+'" data-act="compte" data-arg="'+c.id+'">'+c.label+(c.sub?'<small>'+c.sub+'</small>':"")+'</button>';
+      }
+      h+='</div>';
+    }else if(isR){
+      h+='<p class="section-title">Sens du transfert</p><div class="transfer-box">Espèces <span class="arrow">→</span> Crédit Agricole</div>';
+    }else{
+      h+='<p class="section-title">Compte à débiter</p><div class="seg">';
+      for(var k=0;k<choices.length;k++){var c2=choices[k];
+        h+='<button class="seg-btn'+(f.compte===c2.id?" active":"")+'" data-act="compte" data-arg="'+c2.id+'">'+c2.label+'</button>';
+      }
+      h+='</div>';
     }
-    h+='</div>';
+    h+='<p class="section-title">Montant</p><div class="amount-field"><input id="montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(f.montant||"")+'"><span class="amount-cur">€</span></div>';
+    h+='<p class="section-title">Note / libellé (optionnel)</p><input id="note" class="text-input" type="text" placeholder="ex : Railway, marché de Saint-Paul…" value="'+esc(f.note||"")+'">';
   }
-  h+='<p class="section-title">Montant</p><div class="amount-field"><input id="montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(f.montant||"")+'"><span class="amount-cur">€</span></div>';
-  h+='<p class="section-title">Note / libellé (optionnel)</p><input id="note" class="text-input" type="text" placeholder="ex : Railway, marché de Saint-Paul…" value="'+esc(f.note||"")+'">';
-  h+='<button class="btn btn-primary btn-lg full" data-act="submitMov">'+ic("check")+(state.editId?"Enregistrer les modifications":"Valider")+'</button>';
+  h+='<button class="btn btn-primary btn-lg full" data-act="submitMov">'+ic("check")+(isP?"Payer la dette":(state.editId?"Enregistrer les modifications":"Valider"))+'</button>';
   if(state.editId)h+='<button class="btn btn-danger full" data-act="delMov" data-arg="'+state.editId+'">'+ic("trash")+'Supprimer ce mouvement</button>';
   h+='</div>';
   return h;
@@ -570,7 +592,7 @@ function dettesPanelHTML(debts,ro){
     h+='<div class="mov-list">';
     open.forEach(function(d){
       h+='<div class="mov-row'+(ro?" ro":"")+'"><div class="mov-main"><div class="mov-type">'+esc(d.label||"Dette")+'</div><div class="mov-sub">depuis le '+frDate(d.day)+'</div></div><div class="mov-right"><span class="mov-amt num out">'+formatNum(d.montant)+' €</span>'+
-         (ro?'':'<button class="icon-btn small" data-act="settleDette" data-arg="'+d.id+'" data-stop="1" aria-label="Régler" title="Marquer réglée">'+ic("check")+'</button><button class="icon-btn small" data-act="delDette" data-arg="'+d.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button>')+
+         (ro?'':'<button class="btn btn-secondary" style="padding:7px 12px;font-size:13px;" data-act="payDette" data-arg="'+d.id+'" data-stop="1">Payer</button><button class="icon-btn small" data-act="delDette" data-arg="'+d.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button>')+
          '</div></div>';
     });
     h+='</div>';
@@ -670,21 +692,34 @@ function readSettingsForm(){
 }
 function saveSettings(next){state.settings=next;state.settings._dirty=true;saveCache();}
 function buildMovFromForm(){
-  var montant=round2(parseMontant(state.form.montant));
-  var existing=state.editId?findMov(state.editId):null;
-  return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:state.form.type,compte:state.form.type==="REMISE"?"especes":state.form.compte,montant:montant,note:(state.form.note||"").trim(),_dirty:true};
+  var f=state.form,existing=state.editId?findMov(state.editId):null;
+  if(f.type==="REMB"){
+    var dt=findDette(f.dette_id);
+    var mt=dt?round2(dt.montant):0;
+    return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mt,note:"Paiement dette"+(dt&&dt.label?" : "+dt.label:""),dette_id:f.dette_id,_dirty:true};
+  }
+  var montant=round2(parseMontant(f.montant));
+  return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:f.type,compte:f.type==="REMISE"?"especes":f.compte,montant:montant,note:(f.note||"").trim(),_dirty:true};
 }
 function findMov(id){for(var i=0;i<state.movements.length;i++)if(state.movements[i].id===id)return state.movements[i];return null;}
 function findDette(id){for(var i=0;i<state.debts.length;i++)if(state.debts[i].id===id)return state.debts[i];return null;}
 function commitMov(m){
   var i=-1;for(var j=0;j<state.movements.length;j++)if(state.movements[j].id===m.id){i=j;break;}
   if(i>=0)state.movements[i]=m;else state.movements.push(m);
-  saveCache();state.editId=null;state.form=null;state.view="home";render();sync().then(render);
-  showToast(i>=0?"Mouvement modifié":"Mouvement enregistré");
+  // Paiement de dette : marque la dette réglée (elle sort du « ce que je dois »)
+  if(m.dette_id){var dt=findDette(m.dette_id);if(dt&&!dt.settled_day){dt.settled_day=m.date;dt._dirty=true;}}
+  saveCache();state.editId=null;state.form=null;state.view=m.dette_id?"registre":"home";render();sync().then(render);
+  showToast(m.dette_id?"Dette payée":(i>=0?"Mouvement modifié":"Mouvement enregistré"));
 }
 function submitMov(){
-  var montant=parseMontant(state.form.montant);
-  if(!(montant>0)){showToast("Montant invalide");return;}
+  var f=state.form;
+  if(f.type==="REMB"){
+    if(!findDette(f.dette_id)){showToast("Choisis une dette");return;}
+    if(!f.compte){showToast("Choisis un compte");return;}
+  }else{
+    var montant=parseMontant(f.montant);
+    if(!(montant>0)){showToast("Montant invalide");return;}
+  }
   var m=buildMovFromForm();
   var debit=null;
   if(m.type==="REMISE")debit="especes";else if(m.type!=="VENTE")debit=m.compte;
@@ -702,7 +737,7 @@ function submitMov(){
 }
 function deleteMov(id){
   state.confirm={message:"Supprimer ce mouvement ? Les soldes seront recalculés.",danger:true,confirmLabel:"Supprimer",onYes:function(){
-    state.confirm=null;var m=findMov(id);if(m){m._deleted=true;m._dirty=false;}
+    state.confirm=null;var m=findMov(id);if(m){m._deleted=true;m._dirty=false;if(m.dette_id){var dt=findDette(m.dette_id);if(dt){dt.settled_day=null;dt._dirty=true;}}}
     saveCache();if(state.view==="add"){state.editId=null;state.form=null;state.view="home";}
     render();sync().then(render);showToast("Mouvement supprimé");
   }};
@@ -728,6 +763,7 @@ function settleDette(id){
   var d=findDette(id);if(d){d.settled_day=today();d._dirty=true;}
   saveCache();render();sync().then(render);showToast("Dette réglée");
 }
+function payDette(id){var d=findDette(id);if(!d)return;openAdd({type:"REMB",dette_id:id,compte:"especes"});}
 function delDette(id){
   state.confirm={message:"Supprimer cette dette ?",danger:true,confirmLabel:"Supprimer",onYes:function(){
     state.confirm=null;var d=findDette(id);if(d){d._deleted=true;d._dirty=false;}
@@ -752,7 +788,9 @@ document.addEventListener("click",function(ev){
   if(act==="back"){state.editId=null;state.form=null;state.view="home";render();return;}
   if(act==="add"){openAdd();return;}
   if(act==="quick"){openAdd({type:"VENTE",compte:arg});return;}
-  if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if(arg==="VENTE"&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
+  if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if((arg==="VENTE"||arg==="REMB")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
+  if(act==="selDette"){state.form.dette_id=arg;render();return;}
+  if(act==="payDette"){payDette(arg);return;}
   if(act==="compte"){captureForm();state.form.compte=arg;render();return;}
   if(act==="submitMov"){captureForm();submitMov();return;}
   if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};state.view="add";render();}return;}
