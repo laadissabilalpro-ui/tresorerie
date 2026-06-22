@@ -766,9 +766,9 @@ document.addEventListener("click",function(ev){
   if(act==="copyCourt"){copyText(buildResumeCourt(state.settings,activeMovs(),state.resumeDay||today()));return;}
   if(act==="resumeToday"){state.resumeDay=today();render();return;}
   if(act==="confirmYes"){if(state.confirm&&state.confirm.onYes)state.confirm.onYes();else{state.confirm=null;render();}return;}
-  if(act==="confirmNo"){state.confirm=null;render();return;}
+  if(act==="confirmNo"){if(ev.target===el){state.confirm=null;render();}return;}
   if(act==="modalConfirm"){if(!state.modal)return;var vals={};state.modal.fields.forEach(function(f){var e=document.getElementById(f.id);vals[f.id]=e?e.value:"";});var r=state.modal.onConfirm(vals);if(r===false)return;state.modal=null;render();sync().then(render);return;}
-  if(act==="modalCancel"){state.modal=null;render();return;}
+  if(act==="modalCancel"){if(ev.target===el){state.modal=null;render();}return;}
   if(act==="onbCode"){var v=(document.getElementById("onb_code")||{}).value||"";v=v.trim();if(!v){showToast("Saisis un code");return;}state.code=v;lset(state.readOnly?"treso:ro_code":"treso:code",v);loadCache();state.firstSyncDone=false;render();sync().then(function(){render();ensureRealtime();});return;}
   if(act==="onbSettings"){var ns=readSettingsForm();saveSettings(ns);state.view="home";render();sync().then(render);return;}
   if(act==="retrySync"){render();sync().then(function(){render();ensureRealtime();});return;}
