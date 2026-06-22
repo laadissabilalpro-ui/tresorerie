@@ -801,6 +801,14 @@ function start(){
 }
 if(window.supabase||document.readyState!=="loading"){start();}else{window.addEventListener("DOMContentLoaded",start);}
 
-if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("sw.js").catch(function(e){console.warn("SW",e);});});}
+if("serviceWorker" in navigator){
+  window.addEventListener("load",function(){navigator.serviceWorker.register("sw.js").catch(function(e){console.warn("SW",e);});});
+  // Mise à jour automatique : si une nouvelle version prend le contrôle, on recharge une fois.
+  var __initialCtrl=navigator.serviceWorker.controller,__refreshing=false;
+  navigator.serviceWorker.addEventListener("controllerchange",function(){
+    if(__refreshing)return;
+    if(__initialCtrl){__refreshing=true;location.reload();}
+  });
+}
 
 })();
