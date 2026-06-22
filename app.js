@@ -160,9 +160,9 @@ function buildLedger(s, movs, debts, jours){
   debts=debts||[]; jours=jours||{};
   var openC=toC(s.soldesInit.especes)+toC(s.soldesInit.ca)+toC(s.soldesInit.revolut);
   var openLines=[];
-  if(toC(s.soldesInit.especes)!==0) openLines.push({label:"Espèces",recetteC:toC(s.soldesInit.especes),debitC:0});
-  if(toC(s.soldesInit.ca)!==0) openLines.push({label:"Crédit Agricole",recetteC:toC(s.soldesInit.ca),debitC:0});
-  if(toC(s.soldesInit.revolut)!==0) openLines.push({label:"Revolut",recetteC:toC(s.soldesInit.revolut),debitC:0});
+  if(toC(s.soldesInit.especes)!==0) openLines.push({label:"Espèces",sub:"Solde de départ",recetteC:toC(s.soldesInit.especes),debitC:0});
+  if(toC(s.soldesInit.ca)!==0) openLines.push({label:"Crédit Agricole",sub:"Solde de départ",recetteC:toC(s.soldesInit.ca),debitC:0});
+  if(toC(s.soldesInit.revolut)!==0) openLines.push({label:"Revolut",sub:"Solde de départ",recetteC:toC(s.soldesInit.revolut),debitC:0});
   var map={};
   for(var i=0;i<movs.length;i++){(map[movs[i].date]=map[movs[i].date]||[]).push(movs[i]);}
   var dayKeys=Object.keys(map).sort();
@@ -171,14 +171,14 @@ function buildLedger(s, movs, debts, jours){
     var D=dayKeys[k];
     var dmovs=map[D].slice().sort(function(a,b){return a.ts-b.ts;});
     var lines=[];
-    if(k===0 && fondC!==0) lines.push({label:"Fond de caisse",recetteC:0,debitC:fondC});
+    if(k===0 && fondC!==0) lines.push({label:"Espèces",sub:"Fond de caisse",recetteC:0,debitC:fondC});
     for(var j=0;j<dmovs.length;j++){
-      var m=dmovs[j],a=toC(m.montant);
-      if(m.type==="VENTE") lines.push({label:(m.note||COMPTES[m.compte].nom),recetteC:a,debitC:0});
+      var m=dmovs[j],a=toC(m.montant),cn=COMPTES[m.compte].nom;
+      if(m.type==="VENTE") lines.push({label:cn,sub:"Vente"+(m.note?" — "+m.note:""),recetteC:a,debitC:0});
       else if(m.type==="REMISE"){
-        lines.push({label:"Remise (Espèces → CA)",recetteC:0,debitC:a});
-        lines.push({label:"Remise (Espèces → CA)",recetteC:a,debitC:0});
-      } else lines.push({label:(m.note||TYPES[m.type].label),recetteC:0,debitC:a});
+        lines.push({label:"Espèces",sub:"Remise vers la banque",recetteC:0,debitC:a});
+        lines.push({label:"Crédit Agricole",sub:"Remise reçue",recetteC:a,debitC:0});
+      } else { var isPay=(m.note&&m.note.indexOf("Paiement dette")===0); lines.push({label:cn,sub:(isPay?m.note:(TYPES[m.type].label+(m.note?" — "+m.note:""))),recetteC:0,debitC:a}); }
     }
     var rec=0,deb=0;
     for(var L2=0;L2<lines.length;L2++){rec+=lines[L2].recetteC;deb+=lines[L2].debitC;}
@@ -476,7 +476,11 @@ function viewAdd(){
       }
       h+='</div>';
       var selD=findDette(f.dette_id);
-      if(selD)h+='<div class="note-box">Montant payé : <b>'+money(selD.montant)+'</b> — débité du compte choisi, et la dette passe en « réglée » automatiquement.</div>';
+      if(selD){
+        h+='<p class="section-title">Montant remboursé</p><p class="field-hint">Reste à payer : '+money(selD.montant)+' — tu peux payer une partie.</p>';
+        h+='<div class="amount-field"><input id="montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(f.montant||"")+'"><span class="amount-cur">€</span></div>';
+        h+='<div class="note-box">Ce montant est débité du compte choisi et déduit de la dette dans le registre.</div>';
+      }
     }
   }else{
     if(isV){
@@ -564,17 +568,18 @@ function ledgerTableHTML(L,ro){
     +'table.ledger tr.tot td{border-top:0.5px solid var(--line);font-weight:700;}'
     +'table.ledger td.rec{color:var(--greenInk);}table.ledger td.deb{color:var(--red);}'
     +'table.ledger td.solde{font-size:15px;}'
+    +'table.ledger .led-sub{font-size:11px;color:var(--ink2);margin-top:1px;font-weight:400;}'
     +'</style>';
   var h=st+'<table class="ledger"><colgroup><col style="width:25%"><col style="width:15%"><col style="width:13%"><col style="width:16%"><col style="width:12%"><col style="width:19%"></colgroup>';
   h+='<thead><tr><th>Libellé</th><th class="r">Recettes</th><th class="r">Débit</th><th class="r">Solde</th><th class="r">Marge %</th><th class="r">Ce que je dois</th></tr></thead><tbody>';
   h+='<tr class="grp"><td colspan="6">Solde avant</td></tr>';
   if(L.openLines.length){
-    L.openLines.forEach(function(li){h+='<tr><td>'+esc(li.label)+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td><td></td><td></td></tr>';});
+    L.openLines.forEach(function(li){h+='<tr><td>'+esc(li.label)+(li.sub?'<div class="led-sub">'+esc(li.sub)+'</div>':'')+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td><td></td><td></td></tr>';});
   }
   h+='<tr class="tot"><td>Total</td><td></td><td></td><td class="r solde">'+formatNum(toE(L.openC))+'</td><td></td><td></td></tr>';
   L.days.forEach(function(d){
     h+='<tr class="grp"><td colspan="6">'+frDateLong(d.date)+'</td></tr>';
-    d.lines.forEach(function(li){h+='<tr><td>'+esc(li.label)+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td><td></td><td></td></tr>';});
+    d.lines.forEach(function(li){h+='<tr><td>'+esc(li.label)+(li.sub?'<div class="led-sub">'+esc(li.sub)+'</div>':'')+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td><td></td><td></td></tr>';});
     var margeTxt=d.marge!=null?pctTxt(d.marge):(ro?"—":"+ marge");
     var margeCell=ro?('<td class="r">'+(d.marge!=null?pctTxt(d.marge):"—")+'</td>')
                     :('<td class="r" data-act="editMarge" data-arg="'+d.date+'" style="cursor:pointer;color:'+(d.marge!=null?'var(--ink)':'var(--accent)')+';">'+margeTxt+'</td>');
@@ -695,7 +700,8 @@ function buildMovFromForm(){
   var f=state.form,existing=state.editId?findMov(state.editId):null;
   if(f.type==="REMB"){
     var dt=findDette(f.dette_id);
-    var mt=dt?round2(dt.montant):0;
+    var mt=round2(parseMontant(f.montant));
+    if(dt&&mt>round2(dt.montant))mt=round2(dt.montant);
     return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mt,note:"Paiement dette"+(dt&&dt.label?" : "+dt.label:""),dette_id:f.dette_id,_dirty:true};
   }
   var montant=round2(parseMontant(f.montant));
@@ -707,15 +713,19 @@ function commitMov(m){
   var i=-1;for(var j=0;j<state.movements.length;j++)if(state.movements[j].id===m.id){i=j;break;}
   if(i>=0)state.movements[i]=m;else state.movements.push(m);
   // Paiement de dette : marque la dette réglée (elle sort du « ce que je dois »)
-  if(m.dette_id){var dt=findDette(m.dette_id);if(dt&&!dt.settled_day){dt.settled_day=m.date;dt._dirty=true;}}
+  if(m.dette_id){var dt=findDette(m.dette_id);if(dt){dt.montant=round2((dt.montant||0)-m.montant);if(dt.montant<=0.004){dt.montant=0;dt.settled_day=m.date;}dt._dirty=true;}}
   saveCache();state.editId=null;state.form=null;state.view=m.dette_id?"registre":"home";render();sync().then(render);
   showToast(m.dette_id?"Dette payée":(i>=0?"Mouvement modifié":"Mouvement enregistré"));
 }
 function submitMov(){
   var f=state.form;
   if(f.type==="REMB"){
-    if(!findDette(f.dette_id)){showToast("Choisis une dette");return;}
+    var dpay=findDette(f.dette_id);
+    if(!dpay){showToast("Choisis une dette");return;}
     if(!f.compte){showToast("Choisis un compte");return;}
+    var pm=parseMontant(f.montant);
+    if(!(pm>0)){showToast("Montant invalide");return;}
+    if(pm>round2(dpay.montant)+0.001){showToast("Maximum : "+money(dpay.montant));state.form.montant=String(round2(dpay.montant)).replace(".",",");render();return;}
   }else{
     var montant=parseMontant(f.montant);
     if(!(montant>0)){showToast("Montant invalide");return;}
@@ -737,7 +747,7 @@ function submitMov(){
 }
 function deleteMov(id){
   state.confirm={message:"Supprimer ce mouvement ? Les soldes seront recalculés.",danger:true,confirmLabel:"Supprimer",onYes:function(){
-    state.confirm=null;var m=findMov(id);if(m){m._deleted=true;m._dirty=false;if(m.dette_id){var dt=findDette(m.dette_id);if(dt){dt.settled_day=null;dt._dirty=true;}}}
+    state.confirm=null;var m=findMov(id);if(m){m._deleted=true;m._dirty=false;if(m.dette_id){var dt=findDette(m.dette_id);if(dt){dt.montant=round2((dt.montant||0)+m.montant);dt.settled_day=null;dt._dirty=true;}}}
     saveCache();if(state.view==="add"){state.editId=null;state.form=null;state.view="home";}
     render();sync().then(render);showToast("Mouvement supprimé");
   }};
@@ -763,7 +773,7 @@ function settleDette(id){
   var d=findDette(id);if(d){d.settled_day=today();d._dirty=true;}
   saveCache();render();sync().then(render);showToast("Dette réglée");
 }
-function payDette(id){var d=findDette(id);if(!d)return;openAdd({type:"REMB",dette_id:id,compte:"especes"});}
+function payDette(id){var d=findDette(id);if(!d)return;openAdd({type:"REMB",dette_id:id,compte:"especes",montant:String(round2(d.montant)).replace(".",",")});}
 function delDette(id){
   state.confirm={message:"Supprimer cette dette ?",danger:true,confirmLabel:"Supprimer",onYes:function(){
     state.confirm=null;var d=findDette(id);if(d){d._deleted=true;d._dirty=false;}
@@ -789,7 +799,7 @@ document.addEventListener("click",function(ev){
   if(act==="add"){openAdd();return;}
   if(act==="quick"){openAdd({type:"VENTE",compte:arg});return;}
   if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if((arg==="VENTE"||arg==="REMB")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
-  if(act==="selDette"){state.form.dette_id=arg;render();return;}
+  if(act==="selDette"){state.form.dette_id=arg;var sd=findDette(arg);if(sd)state.form.montant=String(round2(sd.montant)).replace(".",",");render();return;}
   if(act==="payDette"){payDette(arg);return;}
   if(act==="compte"){captureForm();state.form.compte=arg;render();return;}
   if(act==="submitMov"){captureForm();submitMov();return;}
