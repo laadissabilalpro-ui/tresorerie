@@ -1,5 +1,5 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
-   En lecture seule via : window.__TRESO_RO__ (défini par vue.html) OU ?vue=/?lecture=/?c= OU localStorage treso:ro. */
+   Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=. */
 (function(){
 "use strict";
 
@@ -48,6 +48,7 @@ function formatCompact(n){
 }
 function money(n){return formatNum(n)+" €";}
 function eurC(n){return formatCompact(n)+" €";}
+function pctTxt(n){return String(round2(n)).replace(".",",")+" %";}
 
 /* ===================== HELPERS DATE / DIVERS ===================== */
 function pad(n){return (n<10?"0":"")+n;}
@@ -146,6 +147,47 @@ function buildResumeCourt(s,allMovs,k){
   return "CA du "+frDateShort(k)+" : "+formatCompact(toE(ca.total))+" € (esp "+formatCompact(toE(ca.especes))+" / CB "+formatCompact(toE(ca.ca))+" / Rev "+formatCompact(toE(ca.revolut))+"). Dispo total : "+formatNum(toE(d.totalC))+" €.";
 }
 
+/* ===================== REGISTRE (recettes / débit / solde cumulé + dettes datées) ===================== */
+// dette due (centimes) à la date D : incurred (day<=D) et pas réglée avant/à D
+function dettesDuesC(debts,D){
+  var s=0;
+  for(var i=0;i<debts.length;i++){var d=debts[i];
+    if(!d._deleted && d.day<=D && (!d.settled_day || d.settled_day>D)) s+=toC(d.montant);
+  }
+  return s;
+}
+function buildLedger(s, movs, debts, jours){
+  debts=debts||[]; jours=jours||{};
+  var openC=toC(s.soldesInit.especes)+toC(s.soldesInit.ca)+toC(s.soldesInit.revolut);
+  var openLines=[];
+  if(toC(s.soldesInit.especes)!==0) openLines.push({label:"Espèces",recetteC:toC(s.soldesInit.especes),debitC:0});
+  if(toC(s.soldesInit.ca)!==0) openLines.push({label:"Crédit Agricole",recetteC:toC(s.soldesInit.ca),debitC:0});
+  if(toC(s.soldesInit.revolut)!==0) openLines.push({label:"Revolut",recetteC:toC(s.soldesInit.revolut),debitC:0});
+  var map={};
+  for(var i=0;i<movs.length;i++){(map[movs[i].date]=map[movs[i].date]||[]).push(movs[i]);}
+  var dayKeys=Object.keys(map).sort();
+  var fondC=toC(s.fond),running=openC,days=[];
+  for(var k=0;k<dayKeys.length;k++){
+    var D=dayKeys[k];
+    var dmovs=map[D].slice().sort(function(a,b){return a.ts-b.ts;});
+    var lines=[];
+    if(k===0 && fondC!==0) lines.push({label:"Fond de caisse",recetteC:0,debitC:fondC});
+    for(var j=0;j<dmovs.length;j++){
+      var m=dmovs[j],a=toC(m.montant);
+      if(m.type==="VENTE") lines.push({label:(m.note||COMPTES[m.compte].nom),recetteC:a,debitC:0});
+      else if(m.type==="REMISE"){
+        lines.push({label:"Remise (Espèces → CA)",recetteC:0,debitC:a});
+        lines.push({label:"Remise (Espèces → CA)",recetteC:a,debitC:0});
+      } else lines.push({label:(m.note||TYPES[m.type].label),recetteC:0,debitC:a});
+    }
+    var rec=0,deb=0;
+    for(var L2=0;L2<lines.length;L2++){rec+=lines[L2].recetteC;deb+=lines[L2].debitC;}
+    running+=rec-deb;
+    days.push({date:D,lines:lines,recC:rec,debC:deb,soldeC:running,marge:(jours[D]!=null?jours[D]:null),dettesC:dettesDuesC(debts,D)});
+  }
+  return {openC:openC,openLines:openLines,days:days,soldeC:running};
+}
+
 /* ===================== STOCKAGE LOCAL ===================== */
 var LS=window.localStorage;
 function lget(k,d){try{var v=LS.getItem(k);return v===null?d:v;}catch(e){return d;}}
@@ -153,11 +195,16 @@ function lset(k,v){try{LS.setItem(k,v);}catch(e){}}
 function loadCache(){
   try{
     var raw=lget("treso:cache:"+state.code,"");
-    if(raw){var o=JSON.parse(raw);state.settings=o.settings||null;state.movements=Array.isArray(o.movements)?o.movements:[];}
-    else{state.settings=null;state.movements=[];}
-  }catch(e){state.settings=null;state.movements=[];}
+    if(raw){var o=JSON.parse(raw);
+      state.settings=o.settings||null;
+      state.movements=Array.isArray(o.movements)?o.movements:[];
+      state.debts=Array.isArray(o.debts)?o.debts:[];
+      state.jours=o.jours||{};
+      state.joursDirty=o.joursDirty||{};
+    }else{state.settings=null;state.movements=[];state.debts=[];state.jours={};state.joursDirty={};}
+  }catch(e){state.settings=null;state.movements=[];state.debts=[];state.jours={};state.joursDirty={};}
 }
-function saveCache(){try{lset("treso:cache:"+state.code,JSON.stringify({settings:state.settings,movements:state.movements}));}catch(e){}}
+function saveCache(){try{lset("treso:cache:"+state.code,JSON.stringify({settings:state.settings,movements:state.movements,debts:state.debts,jours:state.jours,joursDirty:state.joursDirty}));}catch(e){}}
 
 /* ===================== SUPABASE ===================== */
 var sb=null;
@@ -168,6 +215,7 @@ function client(){
   return sb;
 }
 function rowToMov(d){return {id:d.id,date:d.day,ts:Number(d.ts),type:d.type,compte:d.compte,montant:Number(d.montant),note:d.note||""};}
+function rowToDette(d){return {id:d.id,label:d.label||"",montant:Number(d.montant),day:d.day,settled_day:d.settled_day||null};}
 async function pushAll(c){
   if(state.readOnly)return;
   if(state.settings&&state.settings._dirty){
@@ -176,20 +224,37 @@ async function pushAll(c){
     var r=await c.from("treso_settings").upsert(row,{onConflict:"code"});
     if(!r.error)delete state.settings._dirty;
   }
+  // Mouvements
   var keep=[];
-  for(var i=0;i<state.movements.length;i++){
-    var m=state.movements[i];
+  for(var i=0;i<state.movements.length;i++){var m=state.movements[i];
     if(m._deleted){var rd=await c.from("treso_mouvements").delete().eq("id",m.id);if(rd.error)keep.push(m);}
     else keep.push(m);
   }
   state.movements=keep;
-  for(var j=0;j<state.movements.length;j++){
-    var mm=state.movements[j];
+  for(var j=0;j<state.movements.length;j++){var mm=state.movements[j];
     if(mm._dirty&&!mm._deleted){
       var rr=await c.from("treso_mouvements").upsert({id:mm.id,code:state.code,day:mm.date,ts:mm.ts,type:mm.type,compte:mm.compte,montant:mm.montant,note:mm.note||null,updated_at:new Date().toISOString()},{onConflict:"id"});
       if(!rr.error)delete mm._dirty;
     }
   }
+  // Dettes
+  var keepD=[];
+  for(var di=0;di<state.debts.length;di++){var dd=state.debts[di];
+    if(dd._deleted){var rdd=await c.from("treso_dettes").delete().eq("id",dd.id);if(rdd.error)keepD.push(dd);}
+    else keepD.push(dd);
+  }
+  state.debts=keepD;
+  for(var dj=0;dj<state.debts.length;dj++){var de=state.debts[dj];
+    if(de._dirty&&!de._deleted){
+      var rde=await c.from("treso_dettes").upsert({id:de.id,code:state.code,label:de.label||null,montant:de.montant,day:de.day,settled_day:de.settled_day||null,updated_at:new Date().toISOString()},{onConflict:"id"});
+      if(!rde.error)delete de._dirty;
+    }
+  }
+  // Marge par jour
+  for(var dayk in state.joursDirty){ if(state.joursDirty.hasOwnProperty(dayk)){
+    var rj=await c.from("treso_jours").upsert({code:state.code,day:dayk,marge:(state.jours[dayk]!=null?state.jours[dayk]:null),updated_at:new Date().toISOString()},{onConflict:"code,day"});
+    if(!rj.error)delete state.joursDirty[dayk];
+  }}
 }
 async function pull(c){
   var sres=await c.from("treso_settings").select("*").eq("code",state.code);
@@ -199,15 +264,23 @@ async function pull(c){
   }
   var mres=await c.from("treso_mouvements").select("*").eq("code",state.code);
   if(!mres.error&&mres.data){
-    var remote={};
-    mres.data.forEach(function(d){remote[d.id]=rowToMov(d);});
+    var remote={};mres.data.forEach(function(d){remote[d.id]=rowToMov(d);});
     var tombs=[];
-    state.movements.forEach(function(m){
-      if(m._deleted){tombs.push(m);delete remote[m.id];}
-      else if(m._dirty){remote[m.id]=m;}
-    });
+    state.movements.forEach(function(m){if(m._deleted){tombs.push(m);delete remote[m.id];}else if(m._dirty){remote[m.id]=m;}});
     var arr=[];for(var k in remote){if(remote.hasOwnProperty(k))arr.push(remote[k]);}
     state.movements=arr.concat(tombs);
+  }
+  var dres=await c.from("treso_dettes").select("*").eq("code",state.code);
+  if(!dres.error&&dres.data){
+    var rd={};dres.data.forEach(function(d){rd[d.id]=rowToDette(d);});
+    var tD=[];
+    state.debts.forEach(function(x){if(x._deleted){tD.push(x);delete rd[x.id];}else if(x._dirty){rd[x.id]=x;}});
+    var aD=[];for(var k2 in rd){if(rd.hasOwnProperty(k2))aD.push(rd[k2]);}
+    state.debts=aD.concat(tD);
+  }
+  var jres=await c.from("treso_jours").select("*").eq("code",state.code);
+  if(!jres.error&&jres.data){
+    jres.data.forEach(function(r){ if(!state.joursDirty[r.day] && r.marge!=null) state.jours[r.day]=Number(r.marge); });
   }
 }
 async function sync(){
@@ -228,6 +301,8 @@ function ensureRealtime(){
     var ch=c.channel("treso-"+state.code);
     ch.on("postgres_changes",{event:"*",schema:"public",table:"treso_mouvements",filter:f},debSync);
     ch.on("postgres_changes",{event:"*",schema:"public",table:"treso_settings",filter:f},debSync);
+    ch.on("postgres_changes",{event:"*",schema:"public",table:"treso_dettes",filter:f},debSync);
+    ch.on("postgres_changes",{event:"*",schema:"public",table:"treso_jours",filter:f},debSync);
     ch.subscribe();
     state.channel=ch;
   }catch(e){console.warn(e);}
@@ -237,6 +312,8 @@ function syncStatus(){
   if(!navigator.onLine)return "offline";
   var pending=(state.settings&&state.settings._dirty);
   for(var i=0;i<state.movements.length;i++){if(state.movements[i]._dirty||state.movements[i]._deleted){pending=true;break;}}
+  for(var d=0;d<state.debts.length;d++){if(state.debts[d]._dirty||state.debts[d]._deleted){pending=true;break;}}
+  for(var k in state.joursDirty){if(state.joursDirty.hasOwnProperty(k)){pending=true;break;}}
   return pending?"pending":"ok";
 }
 function updateSyncBadge(){var el=document.getElementById("syncBadge");if(el)el.outerHTML=syncBadgeHTML();}
@@ -249,11 +326,12 @@ function syncBadgeHTML(){
 var state={
   code:lget("treso:code",""),
   readOnly:false,
-  settings:null, movements:[],
+  settings:null, movements:[], debts:[], jours:{}, joursDirty:{},
   view:"home", form:null, resumeDay:null, editId:null,
-  confirm:null, channel:null, ready:false, firstSyncDone:false
+  confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 function activeMovs(){return state.movements.filter(function(m){return !m._deleted;});}
+function activeDebts(){return state.debts.filter(function(d){return !d._deleted;});}
 
 /* ===================== TOAST / COPIE ===================== */
 var toastT=null;
@@ -272,7 +350,7 @@ function ic(name){
     list:'<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3.5" y1="6" x2="3.51" y2="6"/><line x1="3.5" y1="12" x2="3.51" y2="12"/><line x1="3.5" y1="18" x2="3.51" y2="18"/>',
     plus:'<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
     resume:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/>',
-    history:'<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+    ledger:'<path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="17" y2="7"/><line x1="9" y1="11" x2="17" y2="11"/><line x1="9" y1="15" x2="14" y2="15"/>',
     gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     trash:'<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
     check:'<polyline points="20 6 9 17 4 12"/>',
@@ -296,32 +374,37 @@ function render(){
     if(!navigator.onLine){app.innerHTML=state.readOnly?msgScreen("Hors-ligne","Connecte-toi à internet pour afficher les données partagées."):viewOnbSettings();return;}
     app.innerHTML=state.readOnly?msgScreen("Aucune donnée","Aucune donnée n'est encore partagée pour ce code de consultation."):viewOnbSettings();return;
   }
-  if(state.readOnly && (state.view==="add"||state.view==="settings"))state.view="home";
+  if(state.readOnly) state.view="registre"; // sa page unique
+  else if(state.view==="add"||state.view==="settings"){} // ok
   var html=header();
   html+='<main class="content">';
   if(state.view==="home")html+=viewHome();
   else if(state.view==="add")html+=viewAdd();
   else if(state.view==="movements")html+=viewMovements();
   else if(state.view==="resume")html+=viewResume();
-  else if(state.view==="history")html+=viewHistory();
+  else if(state.view==="registre")html+=viewRegistre();
   else if(state.view==="settings")html+=viewSettings();
+  else html+=viewHome();
   html+="</main>";
-  if(state.view!=="add"&&state.view!=="settings")html+=bottomNav();
+  if(!state.readOnly && state.view!=="add" && state.view!=="settings")html+=bottomNav();
   if(state.confirm)html+=confirmModal();
+  if(state.modal)html+=modalInput();
   app.innerHTML=html;
   if(!state.readOnly && state.view==="add"){var mi=document.getElementById("montant");if(mi)setTimeout(function(){try{mi.focus();}catch(e){}},120);}
+  if(state.modal){var f0=document.getElementById(state.modal.fields[0].id);if(f0)setTimeout(function(){try{f0.focus();}catch(e){}},120);}
 }
 
 function header(){
-  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",history:"Historique",settings:"Réglages"};
+  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",settings:"Réglages"};
   var showBack=(!state.readOnly)&&(state.view==="add"||state.view==="settings");
   var left=showBack?'<button class="icon-btn" data-act="back" aria-label="Retour">'+ic("home")+'</button>':'<div class="header-brand"><span class="brand-dot"></span></div>';
   var right;
   if(state.readOnly)right=syncBadgeHTML()+'<span class="ro-badge">Consultation</span>';
   else if(showBack)right='<div class="icon-btn placeholder"></div>';
   else right=syncBadgeHTML()+'<button class="icon-btn" data-act="settings" aria-label="Réglages">'+ic("gear")+'</button>';
-  var sub=state.view==="home"?'<p class="header-sub">'+frDateLong(today())+'</p>':"";
-  return '<header class="header">'+left+'<div class="header-title"><h1>'+titles[state.view]+'</h1>'+sub+'</div>'+right+'</header>';
+  var sub=(state.view==="home"||state.readOnly)?'<p class="header-sub">'+frDateLong(today())+'</p>':"";
+  var ttl=state.readOnly?"Trésorerie — consultation":titles[state.view];
+  return '<header class="header">'+left+'<div class="header-title"><h1>'+ttl+'</h1>'+sub+'</div>'+right+'</header>';
 }
 
 function viewHome(){
@@ -360,7 +443,7 @@ function viewHome(){
   h+='<div class="card acct"><div class="acct-line strong only"><span>Crédit Agricole</span><span class="num'+negC(bal.ca)+'">'+money(toE(bal.ca))+'</span></div></div>';
   h+='<div class="card acct"><div class="acct-line strong only"><span>Revolut</span><span class="num'+negC(bal.revolut)+'">'+money(toE(bal.revolut))+'</span></div></div>';
   h+='<div class="card total-card"><p class="total-label">Total consolidé disponible</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p><p class="total-hint">Espèces dispo + Crédit Agricole + Revolut</p></div>';
-  h+='<button class="link-row" data-act="nav" data-arg="resume">Voir le résumé du jour '+ic("chevron")+'</button>';
+  h+='<button class="link-row" data-act="nav" data-arg="registre">Voir le registre complet '+ic("chevron")+'</button>';
   h+='</div>';
   return h;
 }
@@ -391,7 +474,7 @@ function viewAdd(){
     h+='</div>';
   }
   h+='<p class="section-title">Montant</p><div class="amount-field"><input id="montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(f.montant||"")+'"><span class="amount-cur">€</span></div>';
-  h+='<p class="section-title">Note (optionnelle)</p><input id="note" class="text-input" type="text" placeholder="ex : marché de Saint-Paul, carburant…" value="'+esc(f.note||"")+'">';
+  h+='<p class="section-title">Note / libellé (optionnel)</p><input id="note" class="text-input" type="text" placeholder="ex : Railway, marché de Saint-Paul…" value="'+esc(f.note||"")+'">';
   h+='<button class="btn btn-primary btn-lg full" data-act="submitMov">'+ic("check")+(state.editId?"Enregistrer les modifications":"Valider")+'</button>';
   if(state.editId)h+='<button class="btn btn-danger full" data-act="delMov" data-arg="'+state.editId+'">'+ic("trash")+'Supprimer ce mouvement</button>';
   h+='</div>';
@@ -402,9 +485,7 @@ function viewMovements(){
   var tmovs=activeMovs().filter(function(m){return m.date===today();}).sort(function(a,b){return b.ts-a.ts;});
   var h='<div class="view">';
   if(!tmovs.length){
-    h+= state.readOnly
-      ? '<div class="empty"><p>Aucun mouvement aujourd\'hui.</p></div>'
-      : '<div class="empty"><p>Aucun mouvement aujourd\'hui.</p><button class="btn btn-primary" data-act="add">'+ic("plus")+'Ajouter un mouvement</button></div>';
+    h+='<div class="empty"><p>Aucun mouvement aujourd\'hui.</p><button class="btn btn-primary" data-act="add">'+ic("plus")+'Ajouter un mouvement</button></div>';
   }else{
     h+='<div class="mov-list">';
     for(var i=0;i<tmovs.length;i++){var m=tmovs[i];
@@ -412,12 +493,9 @@ function viewMovements(){
       var cls=vente?"pos":(remise?"tr":"out"),sign=vente?"+":(remise?"":"-");
       var sub=remise?"Espèces → Crédit Agricole":COMPTES[m.compte].nom;
       if(m.note)sub+=" · "+esc(m.note);
-      var clickable=state.readOnly?"":' data-act="editMov" data-arg="'+m.id+'"';
-      var trash=state.readOnly?"":'<button class="icon-btn small" data-act="delMov" data-arg="'+m.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button>';
-      h+='<div class="mov-row'+(state.readOnly?" ro":"")+'"'+clickable+'><div class="mov-main"><div class="mov-top"><span class="mov-type">'+TYPES[m.type].label+'</span><span class="mov-heure">'+frHeure(m.ts)+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(m.montant)+' €</span>'+trash+'</div></div>';
+      h+='<div class="mov-row" data-act="editMov" data-arg="'+m.id+'"><div class="mov-main"><div class="mov-top"><span class="mov-type">'+TYPES[m.type].label+'</span><span class="mov-heure">'+frHeure(m.ts)+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(m.montant)+' €</span><button class="icon-btn small" data-act="delMov" data-arg="'+m.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button></div></div>';
     }
-    h+='</div>';
-    if(!state.readOnly)h+='<p class="hint-foot">Touchez un mouvement pour le modifier.</p>';
+    h+='</div><p class="hint-foot">Touchez un mouvement pour le modifier.</p>';
   }
   h+='</div>';
   return h;
@@ -438,33 +516,12 @@ function viewResume(){
   return h;
 }
 
-function viewHistory(){
-  var s=state.settings,movs=activeMovs();
-  var map={};
-  for(var i=0;i<movs.length;i++){(map[movs[i].date]=map[movs[i].date]||[]).push(movs[i]);}
-  var keys=Object.keys(map).sort();
-  var rows=keys.map(function(k){var d=computeDay(s,movs,k);return {date:k,caTotal:d.ca.total,total:d.totalC,nb:map[k].length};});
-  var cumul=rows.reduce(function(a,r){return a+r.caTotal;},0);
-  var h='<div class="view">';
-  h+='<div class="card"><p class="section-title flush">Évolution du CA par jour</p>'+chartHTML(rows)+'</div>';
-  h+='<div class="card cumul-card"><span>CA cumulé sur la période</span><span class="num cumul-amt">'+money(toE(cumul))+'</span></div>';
-  if(!rows.length){
-    h+='<div class="empty"><p>Aucune journée enregistrée pour le moment.</p></div>';
-  }else{
-    h+='<div class="hist-list">';
-    for(var j=rows.length-1;j>=0;j--){var r=rows[j];
-      h+='<button class="hist-row" data-act="openDay" data-arg="'+r.date+'"><div class="hist-left"><span class="hist-date">'+frDate(r.date)+'</span><span class="hist-meta">'+r.nb+' mouvement'+(r.nb>1?"s":"")+'</span></div><div class="hist-right"><span class="hist-ca num">CA '+money(toE(r.caTotal))+'</span><span class="hist-total num">Dispo '+money(toE(r.total))+'</span></div>'+ic("chevron")+'</button>';
-    }
-    h+='</div>';
-  }
-  h+='</div>';
-  return h;
-}
+/* ---- REGISTRE (page unique) ---- */
 function chartHTML(rows){
   if(!rows.length)return '<p class="muted">Pas encore de données.</p>';
   var data=rows.slice(-30),maxC=1;
   for(var i=0;i<data.length;i++)maxC=Math.max(maxC,data[i].caTotal);
-  var H=130,barW=28,gap=12,padB=22,padT=8,W=data.length*(barW+gap)+gap;
+  var H=120,barW=26,gap=12,padB=22,padT=8,W=data.length*(barW+gap)+gap;
   var s='<div class="chart-scroll"><svg width="'+W+'" height="'+(H+padB)+'" role="img">';
   for(var j=0;j<data.length;j++){
     var r=data[j],x=gap+j*(barW+gap),hh=Math.max(2,Math.round((r.caTotal/maxC)*(H-padT))),y=H-hh;
@@ -473,6 +530,68 @@ function chartHTML(rows){
   }
   s+='</svg></div>';
   return s;
+}
+function fmtCell(c){return c?formatNum(toE(c)):"";}
+function ledgerTableHTML(L,ro){
+  var st='<style>'
+    +'table.ledger{width:100%;border-collapse:collapse;font-size:14px;min-width:540px;}'
+    +'table.ledger th{font-size:11.5px;color:var(--ink2);font-weight:600;text-align:left;padding:8px 8px;border-bottom:0.5px solid var(--line);}'
+    +'table.ledger th.r,table.ledger td.r{text-align:right;}'
+    +'table.ledger td{padding:7px 8px;}'
+    +'table.ledger tr.grp td{background:var(--bg);font-size:12px;font-weight:700;color:var(--ink);padding:6px 8px;}'
+    +'table.ledger tr.tot td{border-top:0.5px solid var(--line);font-weight:700;}'
+    +'table.ledger td.rec{color:var(--greenInk);}table.ledger td.deb{color:var(--red);}'
+    +'table.ledger td.solde{font-size:15px;}'
+    +'</style>';
+  var h=st+'<table class="ledger"><colgroup><col style="width:25%"><col style="width:15%"><col style="width:13%"><col style="width:16%"><col style="width:12%"><col style="width:19%"></colgroup>';
+  h+='<thead><tr><th>Libellé</th><th class="r">Recettes</th><th class="r">Débit</th><th class="r">Solde</th><th class="r">Marge %</th><th class="r">Ce que je dois</th></tr></thead><tbody>';
+  h+='<tr class="grp"><td colspan="6">Solde avant</td></tr>';
+  if(L.openLines.length){
+    L.openLines.forEach(function(li){h+='<tr><td>'+esc(li.label)+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td><td></td><td></td></tr>';});
+  }
+  h+='<tr class="tot"><td>Total</td><td></td><td></td><td class="r solde">'+formatNum(toE(L.openC))+'</td><td></td><td></td></tr>';
+  L.days.forEach(function(d){
+    h+='<tr class="grp"><td colspan="6">'+frDateLong(d.date)+'</td></tr>';
+    d.lines.forEach(function(li){h+='<tr><td>'+esc(li.label)+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td><td></td><td></td></tr>';});
+    var margeTxt=d.marge!=null?pctTxt(d.marge):(ro?"—":"+ marge");
+    var margeCell=ro?('<td class="r">'+(d.marge!=null?pctTxt(d.marge):"—")+'</td>')
+                    :('<td class="r" data-act="editMarge" data-arg="'+d.date+'" style="cursor:pointer;color:'+(d.marge!=null?'var(--ink)':'var(--accent)')+';">'+margeTxt+'</td>');
+    h+='<tr class="tot"><td>Total</td><td></td><td></td><td class="r solde">'+formatNum(toE(d.soldeC))+'</td>'+margeCell+'<td class="r">'+(d.dettesC?formatNum(toE(d.dettesC)):"—")+'</td></tr>';
+  });
+  h+='</tbody></table>';
+  return h;
+}
+function dettesPanelHTML(debts,ro){
+  var open=debts.filter(function(d){return !d.settled_day;});
+  var total=0;open.forEach(function(d){total+=toC(d.montant);});
+  var h='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><p class="section-title flush">Ce que je dois</p><span class="num" style="font-weight:800;">'+money(toE(total))+'</span></div>';
+  if(!open.length){h+='<p class="muted">Aucune dette en cours.</p>';}
+  else{
+    h+='<div class="mov-list">';
+    open.forEach(function(d){
+      h+='<div class="mov-row'+(ro?" ro":"")+'"><div class="mov-main"><div class="mov-type">'+esc(d.label||"Dette")+'</div><div class="mov-sub">depuis le '+frDate(d.day)+'</div></div><div class="mov-right"><span class="mov-amt num out">'+formatNum(d.montant)+' €</span>'+
+         (ro?'':'<button class="icon-btn small" data-act="settleDette" data-arg="'+d.id+'" data-stop="1" aria-label="Régler" title="Marquer réglée">'+ic("check")+'</button><button class="icon-btn small" data-act="delDette" data-arg="'+d.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button>')+
+         '</div></div>';
+    });
+    h+='</div>';
+  }
+  if(!ro)h+='<button class="btn btn-secondary full" style="margin-top:10px;" data-act="addDette">'+ic("plus")+'Ajouter une dette</button>';
+  h+='</div>';
+  return h;
+}
+function viewRegistre(){
+  var s=state.settings,movs=activeMovs(),debts=activeDebts(),ro=state.readOnly;
+  var L=buildLedger(s,movs,debts,state.jours);
+  var totalC=L.days.length?L.days[L.days.length-1].soldeC:L.openC;
+  var map={};movs.forEach(function(m){(map[m.date]=map[m.date]||[]).push(m);});
+  var rows=Object.keys(map).sort().map(function(k){return {date:k,caTotal:caJourC(map[k]).total};});
+  var h='<div class="view">';
+  h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+(totalC<0?" neg":"")+'">'+money(toE(totalC))+'</p></div>';
+  if(rows.length)h+='<div class="card"><p class="section-title flush">CA par jour</p>'+chartHTML(rows)+'</div>';
+  h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro)+'</div>';
+  h+=dettesPanelHTML(debts,ro);
+  h+='</div>';
+  return h;
 }
 
 function viewSettings(){
@@ -500,14 +619,16 @@ function labeledMoney(label,id,val,opt){return '<div class="labeled"><label>'+la
 
 function bottomNav(){
   function b(v,icn,lbl){return '<button class="nav-btn'+(state.view===v?" active":"")+'" data-act="nav" data-arg="'+v+'">'+ic(icn)+'<span>'+lbl+'</span></button>';}
-  if(state.readOnly){
-    return '<nav class="bottom-nav ro">'+b("home","home","Accueil")+b("movements","list","Mouvements")+b("resume","resume","Résumé")+b("history","history","Historique")+'</nav>';
-  }
-  return '<nav class="bottom-nav">'+b("home","home","Accueil")+b("movements","list","Mouvements")+'<button class="nav-fab" data-act="add" aria-label="Ajouter">'+ic("plus")+'</button>'+b("resume","resume","Résumé")+b("history","history","Historique")+'</nav>';
+  return '<nav class="bottom-nav">'+b("home","home","Accueil")+b("movements","list","Mouvements")+'<button class="nav-fab" data-act="add" aria-label="Ajouter">'+ic("plus")+'</button>'+b("resume","resume","Résumé")+b("registre","ledger","Registre")+'</nav>';
 }
 function confirmModal(){
   var c=state.confirm;
   return '<div class="overlay" data-act="confirmNo"><div class="modal" data-stop="1"><p class="modal-msg">'+esc(c.message)+'</p><div class="modal-actions"><button class="btn btn-ghost" data-act="confirmNo">Annuler</button><button class="btn '+(c.danger?"btn-danger":"btn-primary")+'" data-act="confirmYes">'+esc(c.confirmLabel||"Confirmer")+'</button></div></div></div>';
+}
+function modalInput(){
+  var m=state.modal,fh="";
+  m.fields.forEach(function(f){fh+='<label style="display:block;font-size:13px;font-weight:600;margin:10px 0 4px;">'+esc(f.label)+'</label><input id="'+esc(f.id)+'" class="text-input'+(f.num?" num":"")+'" type="text" '+(f.num?'inputmode="decimal"':'autocomplete="off"')+' placeholder="'+esc(f.placeholder||"")+'" value="'+esc(f.value||"")+'">';});
+  return '<div class="overlay" data-act="modalCancel"><div class="modal" data-stop="1"><p class="modal-msg">'+esc(m.title)+'</p>'+fh+'<div class="modal-actions" style="margin-top:16px;"><button class="btn btn-ghost" data-act="modalCancel">Annuler</button><button class="btn btn-primary" data-act="modalConfirm">'+esc(m.confirmLabel||"OK")+'</button></div></div></div>';
 }
 
 /* ---- Onboarding ---- */
@@ -529,7 +650,7 @@ function viewOnbSettings(){
     +'<button class="btn btn-primary btn-lg full" data-act="onbSettings">'+ic("check")+'Démarrer</button></div></div>';
 }
 
-/* ===================== FORMULAIRES / ACTIONS ===================== */
+/* ===================== ACTIONS ===================== */
 function captureForm(){
   if(!state.form)return;
   var mi=document.getElementById("montant");if(mi)state.form.montant=mi.value;
@@ -554,6 +675,7 @@ function buildMovFromForm(){
   return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:state.form.type,compte:state.form.type==="REMISE"?"especes":state.form.compte,montant:montant,note:(state.form.note||"").trim(),_dirty:true};
 }
 function findMov(id){for(var i=0;i<state.movements.length;i++)if(state.movements[i].id===id)return state.movements[i];return null;}
+function findDette(id){for(var i=0;i<state.debts.length;i++)if(state.debts[i].id===id)return state.debts[i];return null;}
 function commitMov(m){
   var i=-1;for(var j=0;j<state.movements.length;j++)if(state.movements[j].id===m.id){i=j;break;}
   if(i>=0)state.movements[i]=m;else state.movements.push(m);
@@ -568,8 +690,7 @@ function submitMov(){
   if(m.type==="REMISE")debit="especes";else if(m.type!=="VENTE")debit=m.compte;
   if(debit){
     var others=activeMovs().filter(function(x){return x.id!==m.id;});
-    var prospective=others.concat([m]);
-    var bal=balancesC(state.settings,prospective);
+    var bal=balancesC(state.settings,others.concat([m]));
     var avail=dispoAcctC(bal,debit,state.settings);
     if(avail<0){
       var label=debit==="especes"?"Espèces disponible":COMPTES[debit].nom;
@@ -581,12 +702,36 @@ function submitMov(){
 }
 function deleteMov(id){
   state.confirm={message:"Supprimer ce mouvement ? Les soldes seront recalculés.",danger:true,confirmLabel:"Supprimer",onYes:function(){
-    state.confirm=null;
-    var m=findMov(id);
-    if(m){m._deleted=true;m._dirty=false;}
-    saveCache();
-    if(state.view==="add"){state.editId=null;state.form=null;state.view="home";}
+    state.confirm=null;var m=findMov(id);if(m){m._deleted=true;m._dirty=false;}
+    saveCache();if(state.view==="add"){state.editId=null;state.form=null;state.view="home";}
     render();sync().then(render);showToast("Mouvement supprimé");
+  }};
+  render();
+}
+function editMarge(day){
+  state.modal={title:"Marge % du "+frDate(day),fields:[{id:"m_marge",label:"Marge en %",num:true,value:(state.jours[day]!=null?String(state.jours[day]).replace(".",","):""),placeholder:"ex : 32"}],confirmLabel:"Enregistrer",onConfirm:function(v){
+    var raw=(v.m_marge||"").trim();
+    if(raw===""){delete state.jours[day];}else{var n=parseMontant(raw);if(isNaN(n)){showToast("Valeur invalide");return false;}state.jours[day]=round2(n);}
+    state.joursDirty[day]=true;saveCache();
+  }};
+  render();
+}
+function addDette(){
+  state.modal={title:"Nouvelle dette",fields:[{id:"d_label",label:"À qui / quoi",value:"",placeholder:"ex : Fournisseur A"},{id:"d_montant",label:"Montant (€)",num:true,value:"",placeholder:"0,00"}],confirmLabel:"Ajouter",onConfirm:function(v){
+    var mt=parseMontant(v.d_montant);if(!(mt>0)){showToast("Montant invalide");return false;}
+    state.debts.push({id:uuid(),label:(v.d_label||"").trim()||"Dette",montant:round2(mt),day:today(),settled_day:null,_dirty:true});
+    saveCache();showToast("Dette ajoutée");
+  }};
+  render();
+}
+function settleDette(id){
+  var d=findDette(id);if(d){d.settled_day=today();d._dirty=true;}
+  saveCache();render();sync().then(render);showToast("Dette réglée");
+}
+function delDette(id){
+  state.confirm={message:"Supprimer cette dette ?",danger:true,confirmLabel:"Supprimer",onYes:function(){
+    state.confirm=null;var d=findDette(id);if(d){d._deleted=true;d._dirty=false;}
+    saveCache();render();sync().then(render);showToast("Dette supprimée");
   }};
   render();
 }
@@ -597,9 +742,8 @@ document.addEventListener("click",function(ev){
   var act=el.getAttribute("data-act"),arg=el.getAttribute("data-arg");
   if(el.getAttribute("data-stop"))ev.stopPropagation();
 
-  // Mode consultation : seules les actions de lecture (+ saisie du code) sont autorisées
   if(state.readOnly){
-    var ok={nav:1,openDay:1,resumeToday:1,copyResume:1,copyCourt:1,retrySync:1,onbCode:1};
+    var ok={retrySync:1,onbCode:1};
     if(!ok[act])return;
   }
 
@@ -613,22 +757,28 @@ document.addEventListener("click",function(ev){
   if(act==="submitMov"){captureForm();submitMov();return;}
   if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};state.view="add";render();}return;}
   if(act==="delMov"){deleteMov(arg);return;}
+  if(act==="editMarge"){editMarge(arg);return;}
+  if(act==="addDette"){addDette();return;}
+  if(act==="settleDette"){settleDette(arg);return;}
+  if(act==="delDette"){delDette(arg);return;}
   if(act==="saveSettings"){var next=readSettingsForm();saveSettings(next);state.view="home";render();sync().then(render);showToast("Réglages enregistrés");return;}
   if(act==="copyResume"){copyText(buildResumeMentor(state.settings,activeMovs(),state.resumeDay||today()));return;}
   if(act==="copyCourt"){copyText(buildResumeCourt(state.settings,activeMovs(),state.resumeDay||today()));return;}
-  if(act==="openDay"){state.resumeDay=arg;state.view="resume";render();return;}
   if(act==="resumeToday"){state.resumeDay=today();render();return;}
   if(act==="confirmYes"){if(state.confirm&&state.confirm.onYes)state.confirm.onYes();else{state.confirm=null;render();}return;}
   if(act==="confirmNo"){state.confirm=null;render();return;}
+  if(act==="modalConfirm"){if(!state.modal)return;var vals={};state.modal.fields.forEach(function(f){var e=document.getElementById(f.id);vals[f.id]=e?e.value:"";});var r=state.modal.onConfirm(vals);if(r===false)return;state.modal=null;render();sync().then(render);return;}
+  if(act==="modalCancel"){state.modal=null;render();return;}
   if(act==="onbCode"){var v=(document.getElementById("onb_code")||{}).value||"";v=v.trim();if(!v){showToast("Saisis un code");return;}state.code=v;lset(state.readOnly?"treso:ro_code":"treso:code",v);loadCache();state.firstSyncDone=false;render();sync().then(function(){render();ensureRealtime();});return;}
   if(act==="onbSettings"){var ns=readSettingsForm();saveSettings(ns);state.view="home";render();sync().then(render);return;}
   if(act==="retrySync"){render();sync().then(function(){render();ensureRealtime();});return;}
-  if(act==="changeCode"){state.code="";lset("treso:code","");state.settings=null;state.movements=[];render();return;}
+  if(act==="changeCode"){state.code="";lset("treso:code","");state.settings=null;state.movements=[];state.debts=[];state.jours={};state.joursDirty={};render();return;}
 });
 
 document.addEventListener("keydown",function(ev){
   if(ev.key!=="Enter")return;
   if(document.getElementById("onb_code")&&document.activeElement&&document.activeElement.id==="onb_code"){ev.preventDefault();var b=document.querySelector('[data-act="onbCode"]');if(b)b.click();}
+  else if(state.modal&&document.activeElement&&/^(m_|d_)/.test(document.activeElement.id||"")){ev.preventDefault();var mb=document.querySelector('[data-act="modalConfirm"]');if(mb)mb.click();}
   else if(!state.readOnly&&state.view==="add"&&document.activeElement&&document.activeElement.id==="montant"){ev.preventDefault();captureForm();submitMov();}
 });
 
@@ -639,9 +789,6 @@ window.addEventListener("offline",function(){updateSyncBadge();});
 /* ===================== DEMARRAGE ===================== */
 function start(){
   app=document.getElementById("app");
-  // Lecture seule = page vue.html (window.__TRESO_RO__) OU paramètre ?vue=/?lecture=/?c=.
-  // JAMAIS persistée en drapeau global (sinon l'app d'édition du même navigateur passerait en lecture seule).
-  // Le code est mémorisé dans une clé SÉPARÉE selon le mode, pour qu'ils ne se contaminent pas.
   var param=getParam("vue")||getParam("lecture")||getParam("c");
   state.readOnly=!!(window.__TRESO_RO__||param);
   var CK=state.readOnly?"treso:ro_code":"treso:code";
@@ -654,7 +801,6 @@ function start(){
 }
 if(window.supabase||document.readyState!=="loading"){start();}else{window.addEventListener("DOMContentLoaded",start);}
 
-/* Service worker */
 if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("sw.js").catch(function(e){console.warn("SW",e);});});}
 
 })();
