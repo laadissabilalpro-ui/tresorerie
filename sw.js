@@ -1,14 +1,17 @@
-/* Trésorerie — service worker (PWA) — v3
-   Mise à jour automatique : "réseau d'abord" pour la navigation ET pour app.js/styles.css/manifest,
-   donc l'utilisateur a toujours la dernière version quand il est en ligne (repli sur le cache hors-ligne). */
-const CACHE = "treso-v3";
+/* Trésorerie — service worker (PWA) — v4
+   Mise à jour automatique fiable : "réseau d'abord" qui CONTOURNE le cache HTTP (cache:"reload")
+   pour la navigation et app.js/styles.css/manifest → toujours la dernière version en ligne.
+   Repli sur le cache uniquement hors-ligne. */
+const CACHE = "treso-v4";
 const CORE = ["./", "./index.html", "./vue.html", "./styles.css", "./app.js", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 const CDN = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js";
 
 self.addEventListener("install", (e) => {
   e.waitUntil((async () => {
     const c = await caches.open(CACHE);
-    await c.addAll(CORE);
+    await Promise.all(CORE.map(async (u) => {
+      try { const r = await fetch(u, { cache: "reload" }); if (r && r.ok) await c.put(u, r); } catch (_) {}
+    }));
     try { await c.add(CDN); } catch (_) {}
     await self.skipWaiting();
   })());
@@ -31,10 +34,10 @@ self.addEventListener("fetch", (e) => {
   const isNav = req.mode === "navigate" || (req.headers.get("accept") || "").includes("text/html");
   const isAsset = url.origin === location.origin && /\.(js|css|webmanifest)$/.test(url.pathname);
 
-  // Réseau d'abord (toujours frais en ligne), repli cache hors-ligne
+  // Réseau d'abord SANS cache HTTP (toujours frais en ligne), repli cache hors-ligne
   if (isNav || isAsset) {
     e.respondWith(
-      fetch(req)
+      fetch(req, { cache: "reload" })
         .then((r) => { const copy = r.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); return r; })
         .catch(() => caches.match(req, { ignoreSearch: isNav }).then((m) => m || (isNav ? caches.match("./index.html") : undefined)))
     );
