@@ -538,6 +538,7 @@ function viewAdd(){
       }
       h+='</div>';
     }
+    if(!isV&&!isR){h+='<button type="button" class="btn btn-ghost full" style="margin-top:2px;" data-act="scanTicket">📷 Scanner le ticket</button>';if(state.ocrDate)h+='<div class="note-box">Date lue sur le ticket : '+esc(state.ocrDate)+' — le mouvement reste daté d\'aujourd\'hui.</div>';}
     h+='<p class="section-title">Montant</p><div class="amount-field"><input id="montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(f.montant||"")+'"><span class="amount-cur">€</span></div>';
     h+='<p class="section-title">Note / libellé (optionnel)</p><input id="note" class="text-input" type="text" placeholder="ex : Railway, marché de Saint-Paul…" value="'+esc(f.note||"")+'">';
   }
@@ -727,6 +728,7 @@ function captureForm(){
 }
 function openAdd(preset){
   state.editId=null;
+  state.ocrDate=null;
   state.form={type:"VENTE",compte:"especes",montant:"",note:""};
   if(preset){for(var k in preset)state.form[k]=preset[k];}
   state.view="add";render();
@@ -824,6 +826,74 @@ function openRetraitPerso(){
   state.modal={title:"Retrait perso (mise de côté)",fields:[{id:"r_montant",label:"Montant réservé (€)",num:true,value:String(persoBudgetDefault()).replace(".",","),placeholder:"160"}],confirmLabel:"Réserver",onConfirm:function(v){var n=parseMontant(v.r_montant);if(!(n>0)){showToast("Montant invalide");return false;}addReservePerso(n);showToast("Retrait perso réservé");}};
   render();
 }
+function ensureTesseract(){
+  if(window.Tesseract)return Promise.resolve();
+  if(state._tessP)return state._tessP;
+  state._tessP=new Promise(function(resolve,reject){
+    var s=document.createElement("script");
+    s.src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+    s.onload=function(){resolve();};
+    s.onerror=function(){state._tessP=null;reject(new Error("cdn"));};
+    document.head.appendChild(s);
+  });
+  return state._tessP;
+}
+function openTicketScan(){
+  captureForm();
+  var inp=document.createElement("input");
+  inp.type="file";inp.accept="image/*";inp.setAttribute("capture","environment");
+  inp.onchange=function(){var file=inp.files&&inp.files[0];if(file)runOCR(file);};
+  inp.click();
+}
+function ocrOverlay(on){
+  var ex=document.getElementById("ocrOverlay");
+  if(on){ if(ex)return;
+    var d=document.createElement("div");d.id="ocrOverlay";
+    d.style.cssText="position:fixed;inset:0;background:rgba(22,22,24,.86);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;gap:14px;padding:28px;text-align:center;";
+    d.innerHTML='<div style="width:38px;height:38px;border:3px solid rgba(255,255,255,.3);border-top-color:#C9A961;border-radius:50%;animation:ocrspin 1s linear infinite;"></div><div style="font-size:15px;font-weight:600;">Lecture du ticket…</div><div style="font-size:12.5px;opacity:.75;max-width:260px;">Le 1ᵉʳ scan télécharge le moteur (quelques Mo). Les suivants sont rapides.</div><style>@keyframes ocrspin{to{transform:rotate(360deg)}}</style>';
+    document.body.appendChild(d);
+  } else if(ex){ex.remove();}
+}
+function runOCR(file){
+  ocrOverlay(true);
+  var reader=new FileReader();
+  reader.onerror=function(){ocrOverlay(false);showToast("Image illisible");};
+  reader.onload=function(){
+    var dataUrl=reader.result;
+    ensureTesseract().then(function(){
+      return window.Tesseract.recognize(dataUrl,"fra");
+    }).then(function(res){
+      ocrOverlay(false);
+      var p=parseTicket((res&&res.data&&res.data.text)||"");
+      applyOcr(p);
+      showToast(p.montant!=null?("Ticket lu : "+formatNum(p.montant)+" € — vérifie"):"Ticket lu — complète à la main");
+    }).catch(function(){
+      ocrOverlay(false);showToast("Lecture impossible — saisis à la main");
+    });
+  };
+  reader.readAsDataURL(file);
+}
+function parseTicket(text){
+  text=String(text||"");
+  var lines=text.split(/\r?\n/).map(function(l){return l.replace(/\s+/g," ").trim();}).filter(Boolean);
+  function toNum(a,b){return parseFloat(a+"."+b);}
+  var amount=null,kw=/(TOTAL|TTC|NET\s*[AÀ]\s*PAYER|[AÀ]\s*PAYER|MONTANT)/i,kwAmts=[];
+  lines.forEach(function(l){ if(kw.test(l)){var m,re=/(\d{1,4})[.,](\d{2})(?!\d)/g;while((m=re.exec(l))){kwAmts.push(toNum(m[1],m[2]));}} });
+  if(kwAmts.length){amount=Math.max.apply(null,kwAmts);}
+  else{var all=[],m2,re2=/(\d{1,4})[.,](\d{2})(?!\d)/g;while((m2=re2.exec(text))){all.push(toNum(m2[1],m2[2]));}if(all.length)amount=Math.max.apply(null,all);}
+  var date=null,dm=text.match(/(\d{2})[\/.\-](\d{2})[\/.\-](\d{2,4})/);
+  if(dm){var y=dm[3].length===2?("20"+dm[3]):dm[3];date=dm[1]+"/"+dm[2]+"/"+y;}
+  var merchant=null;
+  for(var i=0;i<lines.length&&i<6;i++){var l=lines[i];var letters=(l.match(/[A-Za-zÀ-ÿ]/g)||[]).length;
+    if(letters>=3&&l.length<=28&&!/\d{2}[\/.\-]\d{2}/.test(l)&&!/(TICKET|RE[ÇC]U|FACTURE|TVA|SIRET|^TEL|EUR\b|CAISSE)/i.test(l)){merchant=l;break;}}
+  return {montant:amount,date:date,merchant:merchant};
+}
+function applyOcr(p){
+  if(p.montant!=null)state.form.montant=String(p.montant).replace(".",",");
+  if(p.merchant&&!(state.form.note&&state.form.note.trim()))state.form.note=p.merchant.charAt(0).toUpperCase()+p.merchant.slice(1).toLowerCase();
+  state.ocrDate=p.date||null;
+  render();
+}
 function delDette(id){
   state.confirm={message:"Supprimer cette dette ?",danger:true,confirmLabel:"Supprimer",onYes:function(){
     state.confirm=null;var d=findDette(id);if(d){d._deleted=true;d._dirty=false;}
@@ -852,6 +922,7 @@ document.addEventListener("click",function(ev){
   if(act==="selDette"){state.form.dette_id=arg;var sd=findDette(arg);if(sd)state.form.montant=String(round2(sd.montant)).replace(".",",");render();return;}
   if(act==="payDette"){payDette(arg);return;}
   if(act==="retraitPerso"){openRetraitPerso();return;}
+  if(act==="scanTicket"){openTicketScan();return;}
   if(act==="depensePerso"){openAdd({type:"PERSO",compte:"especes"});return;}
   if(act==="suggestRetraitOk"){addReservePerso(persoBudgetDefault());lset("treso:persoSuggest",weekStartPerso());render();sync().then(render);showToast("Retrait perso réservé");return;}
   if(act==="suggestRetraitNo"){lset("treso:persoSuggest",weekStartPerso());render();return;}
