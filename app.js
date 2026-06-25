@@ -178,7 +178,7 @@ function buildLedger(s, movs, debts, jours){
       else if(m.type==="REMISE"){
         lines.push({label:"Espèces",sub:"Remise vers la banque",recetteC:0,debitC:a});
         lines.push({label:"Crédit Agricole",sub:"Remise reçue",recetteC:a,debitC:0});
-      } else { var isPay=(m.note&&m.note.indexOf("Paiement dette")===0); lines.push({label:cn,sub:(isPay?m.note:(TYPES[m.type].label+(m.note?" — "+m.note:""))),recetteC:0,debitC:a}); }
+      } else { var special=(m.note&&(m.note.indexOf("Paiement dette")===0||m.note.indexOf("Perso · ")===0)); lines.push({label:cn,sub:(special?m.note:(TYPES[m.type].label+(m.note?" — "+m.note:""))),recetteC:0,debitC:a}); }
     }
     var rec=0,deb=0;
     for(var L2=0;L2<lines.length;L2++){rec+=lines[L2].recetteC;deb+=lines[L2].debitC;}
@@ -330,8 +330,15 @@ var state={
   view:"home", form:null, resumeDay:null, editId:null,
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
-function activeMovs(){return state.movements.filter(function(m){return !m._deleted;});}
+var RESERVE_MARK="__RESERVE_PERSO__";
+function activeMovs(){return state.movements.filter(function(m){return !m._deleted && m.note!==RESERVE_MARK;});}
 function activeDebts(){return state.debts.filter(function(d){return !d._deleted;});}
+function isPersoDep(m){return typeof m.note==="string"&&m.note.indexOf("Perso · ")===0;}
+function persoBudgetDefault(){var v=parseMontant(lget("treso:persoBudget","160"));return (isNaN(v)||v<=0)?160:v;}
+function persoResetDay(){var v=parseInt(lget("treso:persoDay","4"),10);return isNaN(v)?4:v;}
+function weekStartPerso(){var d=new Date();d.setHours(0,0,0,0);var rd=persoResetDay();var diff=(d.getDay()-rd+7)%7;d.setDate(d.getDate()-diff);return dateKey(d);}
+function persoWeek(){var ws=weekStartPerso(),td=today(),R=0,C=0;for(var i=0;i<state.movements.length;i++){var m=state.movements[i];if(m._deleted)continue;if(m.note===RESERVE_MARK){if(m.date>=ws&&m.date<=td)R+=toC(m.montant);}else if(isPersoDep(m)){if(m.date>=ws&&m.date<=td)C+=toC(m.montant);}}return {R:R,C:C,reste:Math.max(0,R-C),ws:ws};}
+function addReservePerso(montant){state.movements.push({id:uuid(),date:today(),ts:Date.now(),type:"CHARGE",compte:"especes",montant:round2(montant),note:RESERVE_MARK,_dirty:true});saveCache();}
 
 /* ===================== TOAST / COPIE ===================== */
 var toastT=null;
@@ -416,7 +423,11 @@ function viewHome(){
   var totalConso=dispoEsp+bal.ca+bal.revolut;
   var alertes=computeAlertes(bal,s);
   var negC=function(c){return c<0?" neg":"";};
+  var pw=persoWeek();
   var h='<div class="view">';
+  if((new Date().getDay()===persoResetDay()) && pw.R<=0 && lget("treso:persoSuggest","")!==pw.ws){
+    h+='<div class="card" style="background:var(--accentSoft);border-color:transparent;"><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;color:var(--accent2);font-weight:700;font-size:14px;">'+ic("alert")+'<span>C\'est jeudi</span></div><p style="margin:0 0 10px;font-size:13.5px;color:var(--accent2);line-height:1.4;">Enregistrer ton retrait perso de '+money(persoBudgetDefault())+' pour la semaine ?</p><div style="display:flex;gap:8px;"><button class="btn btn-primary" style="flex:1;" data-act="suggestRetraitOk">Oui, '+money(persoBudgetDefault())+'</button><button class="btn btn-ghost" data-act="suggestRetraitNo">Plus tard</button></div></div>';
+  }
   if(alertes.length){
     h+='<div class="card alert-card"><div class="alert-head">'+ic("alert")+'<span>Alertes</span></div>';
     for(var i=0;i<alertes.length;i++)h+='<p class="alert-line">'+esc(alertes[i])+'</p>';
@@ -442,7 +453,14 @@ function viewHome(){
   h+='<div class="acct-line strong"><span>Disponible</span><span class="num'+negC(dispoEsp)+'">'+money(toE(dispoEsp))+'</span></div></div>';
   h+='<div class="card acct"><div class="acct-line strong only"><span>Crédit Agricole</span><span class="num'+negC(bal.ca)+'">'+money(toE(bal.ca))+'</span></div></div>';
   h+='<div class="card acct"><div class="acct-line strong only"><span>Revolut</span><span class="num'+negC(bal.revolut)+'">'+money(toE(bal.revolut))+'</span></div></div>';
-  h+='<div class="card total-card"><p class="total-label">Total consolidé disponible</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p><p class="total-hint">Espèces dispo + Crédit Agricole + Revolut</p></div>';
+  var dispoLibreC=totalConso-pw.reste;
+  h+='<div class="card total-card"><p class="total-label">Total</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p>';
+  h+='<div style="border-top:1px solid rgba(255,255,255,.15);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:13px;opacity:.85;">Disponible (libre)</span><span class="num" style="font-size:20px;font-weight:800;'+(dispoLibreC<0?"color:#FF9B9B;":"")+'">'+money(toE(dispoLibreC))+'</span></div>';
+  h+='<p class="total-hint">Disponible = Total − mise de côté perso non dépensée</p></div>';
+  h+='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><p class="section-title flush">Perso · semaine</p>'+(pw.R>0?'<span class="num" style="font-weight:800;">reste '+money(toE(pw.reste))+'</span>':'')+'</div>';
+  if(pw.R<=0){h+='<p class="muted" style="margin:2px 0 8px;">Aucun retrait perso cette semaine.</p>';}
+  else{var pct=Math.min(100,Math.round(pw.C/pw.R*100));h+='<div style="height:9px;background:var(--bg);border-radius:6px;overflow:hidden;margin:8px 0 6px;"><div style="height:100%;width:'+pct+'%;background:var(--accent);"></div></div><div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink2);"><span>Réservé '+money(toE(pw.R))+'</span><span>Dépensé '+money(toE(pw.C))+'</span></div><div style="text-align:right;margin-top:8px;"><button style="background:none;border:none;color:var(--ink2);font-size:12px;text-decoration:underline;cursor:pointer;padding:2px;" data-act="annulRetraitPerso">Annuler le retrait</button></div>';}
+  h+='<div class="quick-row" style="margin-top:12px;"><button class="quick-btn" data-act="retraitPerso"><span class="q-plus">+</span> Retrait perso</button><button class="quick-btn" data-act="depensePerso"><span class="q-plus">−</span> Dépense perso</button></div></div>';
   h+='<button class="link-row" data-act="nav" data-arg="registre">Voir le registre complet '+ic("chevron")+'</button>';
   h+='</div>';
   return h;
@@ -458,6 +476,7 @@ function viewAdd(){
     h+='<button class="type-btn'+(f.type===t.id?" active":"")+'" data-act="type" data-arg="'+t.id+'"><span class="sens-dot '+t.sens+'"></span>'+t.label+'</button>';
   }
   h+='<button class="type-btn'+(isP?" active":"")+'" data-act="type" data-arg="REMB"><span class="sens-dot sortie"></span>Paiement dette</button>';
+  h+='<button class="type-btn full2'+(f.type==="PERSO"?" active":"")+'" data-act="type" data-arg="PERSO"><span class="sens-dot sortie"></span>Dépense perso</button>';
   h+='</div>';
   if(isP){
     var open=activeDebts().filter(function(d){return !d.settled_day;});
@@ -613,7 +632,8 @@ function viewRegistre(){
   var map={};movs.forEach(function(m){(map[m.date]=map[m.date]||[]).push(m);});
   var rows=Object.keys(map).sort().map(function(k){return {date:k,caTotal:caJourC(map[k]).total};});
   var h='<div class="view">';
-  h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+(totalC<0?" neg":"")+'">'+money(toE(totalC))+'</p></div>';
+  var pwR=persoWeek();var dispoLibR=totalC-pwR.reste;
+  h+='<div class="card total-card"><p class="total-label">Total</p><p class="total-amount num'+(totalC<0?" neg":"")+'">'+money(toE(totalC))+'</p><div style="border-top:1px solid rgba(255,255,255,.15);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:13px;opacity:.85;">Disponible (libre)</span><span class="num" style="font-size:20px;font-weight:800;'+(dispoLibR<0?"color:#FF9B9B;":"")+'">'+money(toE(dispoLibR))+'</span></div></div>';
   if(rows.length)h+='<div class="card"><p class="section-title flush">CA par jour</p>'+chartHTML(rows)+'</div>';
   h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro)+'</div>';
   h+=dettesPanelHTML(debts,ro);
@@ -704,6 +724,10 @@ function buildMovFromForm(){
     if(dt&&mt>round2(dt.montant))mt=round2(dt.montant);
     return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mt,note:"Paiement dette"+(dt&&dt.label?" : "+dt.label:""),dette_id:f.dette_id,_dirty:true};
   }
+  if(f.type==="PERSO"){
+    var mtp=round2(parseMontant(f.montant));
+    return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mtp,note:"Perso · "+((f.note||"").trim()||"dépense"),_dirty:true};
+  }
   var montant=round2(parseMontant(f.montant));
   return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:f.type,compte:f.type==="REMISE"?"especes":f.compte,montant:montant,note:(f.note||"").trim(),_dirty:true};
 }
@@ -774,6 +798,10 @@ function settleDette(id){
   saveCache();render();sync().then(render);showToast("Dette réglée");
 }
 function payDette(id){var d=findDette(id);if(!d)return;openAdd({type:"REMB",dette_id:id,compte:"especes",montant:String(round2(d.montant)).replace(".",",")});}
+function openRetraitPerso(){
+  state.modal={title:"Retrait perso (mise de côté)",fields:[{id:"r_montant",label:"Montant réservé (€)",num:true,value:String(persoBudgetDefault()).replace(".",","),placeholder:"160"}],confirmLabel:"Réserver",onConfirm:function(v){var n=parseMontant(v.r_montant);if(!(n>0)){showToast("Montant invalide");return false;}addReservePerso(n);showToast("Retrait perso réservé");}};
+  render();
+}
 function delDette(id){
   state.confirm={message:"Supprimer cette dette ?",danger:true,confirmLabel:"Supprimer",onYes:function(){
     state.confirm=null;var d=findDette(id);if(d){d._deleted=true;d._dirty=false;}
@@ -798,9 +826,14 @@ document.addEventListener("click",function(ev){
   if(act==="back"){state.editId=null;state.form=null;state.view="home";render();return;}
   if(act==="add"){openAdd();return;}
   if(act==="quick"){openAdd({type:"VENTE",compte:arg});return;}
-  if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if((arg==="VENTE"||arg==="REMB")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
+  if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if((arg==="VENTE"||arg==="REMB"||arg==="PERSO")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
   if(act==="selDette"){state.form.dette_id=arg;var sd=findDette(arg);if(sd)state.form.montant=String(round2(sd.montant)).replace(".",",");render();return;}
   if(act==="payDette"){payDette(arg);return;}
+  if(act==="retraitPerso"){openRetraitPerso();return;}
+  if(act==="depensePerso"){openAdd({type:"PERSO",compte:"especes"});return;}
+  if(act==="suggestRetraitOk"){addReservePerso(persoBudgetDefault());lset("treso:persoSuggest",weekStartPerso());render();sync().then(render);showToast("Retrait perso réservé");return;}
+  if(act==="suggestRetraitNo"){lset("treso:persoSuggest",weekStartPerso());render();return;}
+  if(act==="annulRetraitPerso"){state.confirm={message:"Annuler le retrait perso réservé cette semaine ?",danger:true,confirmLabel:"Annuler le retrait",onYes:function(){state.confirm=null;var ws=weekStartPerso(),td=today();for(var i=0;i<state.movements.length;i++){var mm=state.movements[i];if(!mm._deleted&&mm.note===RESERVE_MARK&&mm.date>=ws&&mm.date<=td){mm._deleted=true;mm._dirty=false;}}saveCache();render();sync().then(render);showToast("Retrait annulé");}};render();return;}
   if(act==="compte"){captureForm();state.form.compte=arg;render();return;}
   if(act==="submitMov"){captureForm();submitMov();return;}
   if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};state.view="add";render();}return;}
@@ -826,7 +859,7 @@ document.addEventListener("click",function(ev){
 document.addEventListener("keydown",function(ev){
   if(ev.key!=="Enter")return;
   if(document.getElementById("onb_code")&&document.activeElement&&document.activeElement.id==="onb_code"){ev.preventDefault();var b=document.querySelector('[data-act="onbCode"]');if(b)b.click();}
-  else if(state.modal&&document.activeElement&&/^(m_|d_)/.test(document.activeElement.id||"")){ev.preventDefault();var mb=document.querySelector('[data-act="modalConfirm"]');if(mb)mb.click();}
+  else if(state.modal&&document.activeElement&&/^(m_|d_|r_)/.test(document.activeElement.id||"")){ev.preventDefault();var mb=document.querySelector('[data-act="modalConfirm"]');if(mb)mb.click();}
   else if(!state.readOnly&&state.view==="add"&&document.activeElement&&document.activeElement.id==="montant"){ev.preventDefault();captureForm();submitMov();}
 });
 
