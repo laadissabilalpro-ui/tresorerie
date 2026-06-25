@@ -337,7 +337,7 @@ function isPersoDep(m){return typeof m.note==="string"&&m.note.indexOf("Perso ·
 function persoBudgetDefault(){var v=parseMontant(lget("treso:persoBudget","160"));return (isNaN(v)||v<=0)?160:v;}
 function persoResetDay(){var v=parseInt(lget("treso:persoDay","4"),10);return isNaN(v)?4:v;}
 function weekStartPerso(){var d=new Date();d.setHours(0,0,0,0);var rd=persoResetDay();var diff=(d.getDay()-rd+7)%7;d.setDate(d.getDate()-diff);return dateKey(d);}
-function persoWeek(){var ws=weekStartPerso(),td=today(),R=0,C=0;for(var i=0;i<state.movements.length;i++){var m=state.movements[i];if(m._deleted)continue;if(m.note===RESERVE_MARK){if(m.date>=ws&&m.date<=td)R+=toC(m.montant);}else if(isPersoDep(m)){if(m.date>=ws&&m.date<=td)C+=toC(m.montant);}}return {R:R,C:C,reste:Math.max(0,R-C),ws:ws};}
+function persoWeek(){var ws=weekStartPerso(),td=today(),R=0,C=0,items=[];for(var i=0;i<state.movements.length;i++){var m=state.movements[i];if(m._deleted)continue;var inWk=(m.date>=ws&&m.date<=td);if(m.note===RESERVE_MARK){if(inWk){R+=toC(m.montant);items.push({date:m.date,ts:m.ts||0,kind:"reserve",label:"Retrait perso",montantC:toC(m.montant)});}}else if(isPersoDep(m)){if(inWk){C+=toC(m.montant);items.push({date:m.date,ts:m.ts||0,kind:"dep",label:(m.note||"").replace(/^Perso · /,""),montantC:toC(m.montant),compte:m.compte});}}}items.sort(function(a,b){return a.date<b.date?-1:a.date>b.date?1:(a.ts-b.ts);});return {R:R,C:C,reste:Math.max(0,R-C),ws:ws,items:items};}
 function addReservePerso(montant){state.movements.push({id:uuid(),date:today(),ts:Date.now(),type:"CHARGE",compte:"especes",montant:round2(montant),note:RESERVE_MARK,_dirty:true});saveCache();}
 
 /* ===================== TOAST / COPIE ===================== */
@@ -414,6 +414,30 @@ function header(){
   return '<header class="header">'+left+'<div class="header-title"><h1>'+ttl+'</h1>'+sub+'</div>'+right+'</header>';
 }
 
+function persoPanelHTML(actions){
+  var pw=persoWeek();
+  var h='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><p class="section-title flush">Perso · semaine</p>'+(pw.R>0?'<span class="num" style="font-weight:800;">reste '+money(toE(pw.reste))+'</span>':'')+'</div>';
+  if(pw.R<=0&&pw.C<=0){ h+='<p class="muted" style="margin:2px 0 8px;">Aucun retrait perso cette semaine.</p>'; }
+  else {
+    var pct=pw.R>0?Math.min(100,Math.round(pw.C/pw.R*100)):0;
+    h+='<div style="height:9px;background:var(--bg);border-radius:6px;overflow:hidden;margin:8px 0 6px;"><div style="height:100%;width:'+pct+'%;background:var(--accent);"></div></div>';
+    h+='<div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink2);"><span>Réservé '+money(toE(pw.R))+'</span><span>Dépensé '+money(toE(pw.C))+'</span></div>';
+    if(pw.items.length){
+      h+='<div style="margin-top:10px;border-top:1px solid rgba(0,0,0,.08);padding-top:4px;">';
+      pw.items.forEach(function(it){
+        var dm=it.date.slice(8,10)+'/'+it.date.slice(5,7),amt,lbl;
+        if(it.kind==="reserve"){ lbl="Retrait perso (mise de côté)"; amt='<span class="num" style="color:var(--ink2);">'+money(toE(it.montantC))+'</span>'; }
+        else { lbl=(it.label||"Dépense")+(it.compte&&COMPTES[it.compte]?' · '+COMPTES[it.compte].nom:''); amt='<span class="num neg">−'+money(toE(it.montantC))+'</span>'; }
+        h+='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:4px 0;font-size:13px;"><span style="color:var(--ink);">'+dm+' · '+esc(lbl)+'</span>'+amt+'</div>';
+      });
+      h+='</div>';
+    }
+    if(actions)h+='<div style="text-align:right;margin-top:6px;"><button style="background:none;border:none;color:var(--ink2);font-size:12px;text-decoration:underline;cursor:pointer;padding:2px;" data-act="annulRetraitPerso">Annuler le retrait</button></div>';
+  }
+  if(actions)h+='<div class="quick-row" style="margin-top:12px;"><button class="quick-btn" data-act="retraitPerso"><span class="q-plus">+</span> Retrait perso</button><button class="quick-btn" data-act="depensePerso"><span class="q-plus">−</span> Dépense perso</button></div>';
+  h+='</div>';
+  return h;
+}
 function viewHome(){
   var s=state.settings,movs=activeMovs();
   var bal=balancesC(s,movs);
@@ -457,10 +481,7 @@ function viewHome(){
   h+='<div class="card total-card"><p class="total-label">Total</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p>';
   h+='<div style="border-top:1px solid rgba(255,255,255,.15);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:13px;opacity:.85;">Disponible (libre)</span><span class="num" style="font-size:20px;font-weight:800;'+(dispoLibreC<0?"color:#FF9B9B;":"")+'">'+money(toE(dispoLibreC))+'</span></div>';
   h+='<p class="total-hint">Disponible = Total − mise de côté perso non dépensée</p></div>';
-  h+='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><p class="section-title flush">Perso · semaine</p>'+(pw.R>0?'<span class="num" style="font-weight:800;">reste '+money(toE(pw.reste))+'</span>':'')+'</div>';
-  if(pw.R<=0){h+='<p class="muted" style="margin:2px 0 8px;">Aucun retrait perso cette semaine.</p>';}
-  else{var pct=Math.min(100,Math.round(pw.C/pw.R*100));h+='<div style="height:9px;background:var(--bg);border-radius:6px;overflow:hidden;margin:8px 0 6px;"><div style="height:100%;width:'+pct+'%;background:var(--accent);"></div></div><div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink2);"><span>Réservé '+money(toE(pw.R))+'</span><span>Dépensé '+money(toE(pw.C))+'</span></div><div style="text-align:right;margin-top:8px;"><button style="background:none;border:none;color:var(--ink2);font-size:12px;text-decoration:underline;cursor:pointer;padding:2px;" data-act="annulRetraitPerso">Annuler le retrait</button></div>';}
-  h+='<div class="quick-row" style="margin-top:12px;"><button class="quick-btn" data-act="retraitPerso"><span class="q-plus">+</span> Retrait perso</button><button class="quick-btn" data-act="depensePerso"><span class="q-plus">−</span> Dépense perso</button></div></div>';
+  h+=persoPanelHTML(true);
   h+='<button class="link-row" data-act="nav" data-arg="registre">Voir le registre complet '+ic("chevron")+'</button>';
   h+='</div>';
   return h;
@@ -634,6 +655,7 @@ function viewRegistre(){
   var h='<div class="view">';
   var pwR=persoWeek();var dispoLibR=totalC-pwR.reste;
   h+='<div class="card total-card"><p class="total-label">Total</p><p class="total-amount num'+(totalC<0?" neg":"")+'">'+money(toE(totalC))+'</p><div style="border-top:1px solid rgba(255,255,255,.15);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:13px;opacity:.85;">Disponible (libre)</span><span class="num" style="font-size:20px;font-weight:800;'+(dispoLibR<0?"color:#FF9B9B;":"")+'">'+money(toE(dispoLibR))+'</span></div></div>';
+  h+=persoPanelHTML(!ro);
   if(rows.length)h+='<div class="card"><p class="section-title flush">CA par jour</p>'+chartHTML(rows)+'</div>';
   h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro)+'</div>';
   h+=dettesPanelHTML(debts,ro);
