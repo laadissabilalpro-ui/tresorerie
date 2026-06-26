@@ -681,7 +681,27 @@ function viewSettings(){
   h+='<div class="note-box">La clôture est automatique par date : les soldes de clôture d\'un jour deviennent l\'ouverture du lendemain.</div>';
   h+='<div class="note-box">Code de synchro : <b>'+esc(state.code)+'</b>. Lien <b>consultation</b> (mentor, lecture seule) : <b>vue.html?c='+esc(state.code)+'</b></div>';
   h+='<button class="btn btn-primary btn-lg full" data-act="saveSettings">'+ic("check")+'Enregistrer les réglages</button>';
+  h+=visionSettingsHTML();
   h+='</div>';
+  return h;
+}
+function visionSettingsHTML(){
+  var key=visionKey(),prov=visionProvider(key);
+  var provLabel=prov==="openai"?"OpenAI":prov==="anthropic"?"Anthropic":(prov==="inconnu"?"format inconnu":"");
+  var h='<div style="height:1px;background:rgba(0,0,0,.10);margin:24px 0 14px;"></div>';
+  h+='<p class="section-title">Scan ticket — OCR IA</p>';
+  h+='<div class="note-box">Pour lire avec précision les tickets froissés, ajoute une clé API IA (~1–3 €/mois selon ton usage). Sans clé, le scan reste gratuit mais moins précis. <b>La clé reste sur ton téléphone, jamais en base, jamais visible par le mentor.</b></div>';
+  h+='<div style="display:flex;gap:8px;margin:10px 0;"><a class="btn btn-ghost" style="flex:1;text-align:center;text-decoration:none;" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Créer ma clé OpenAI</a><a class="btn btn-ghost" style="flex:1;text-align:center;text-decoration:none;" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Créer ma clé Anthropic</a></div>';
+  if(key){
+    h+='<div class="note-box" style="border-left:3px solid var(--accent);">✓ Clé enregistrée'+(provLabel?(" — <b>"+provLabel+"</b>"):"")+' · modèle <b>'+esc(visionModelFor(prov))+'</b></div>';
+    h+='<div style="display:flex;gap:8px;margin-top:8px;"><button class="btn btn-ghost" style="flex:1;" data-act="testVisionKey">Tester la clé</button><button class="btn btn-danger" style="flex:1;" data-act="delVisionKey">Supprimer</button></div>';
+    h+='<p class="field-hint" style="margin-top:10px;">Remplacer : colle une nouvelle clé ci-dessous.</p>';
+  } else {
+    h+='<p class="field-hint">Recommandé : <b>OpenAI</b> (gpt-4o-mini) — excellent sur les tickets et ~0,01 €/scan.</p>';
+  }
+  h+='<div style="display:flex;gap:6px;align-items:center;"><input id="set_visionkey" class="text-input" type="password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="sk-… (colle ta clé ici)" value="" style="flex:1;"><button class="icon-btn" data-act="revealKey" aria-label="Afficher la clé" style="font-size:18px;">👁</button></div>';
+  h+='<button class="btn btn-primary full" style="margin-top:8px;" data-act="saveVisionKey">Enregistrer la clé</button>';
+  if(state.visionTest)h+='<div class="note-box" style="margin-top:8px;">'+esc(state.visionTest)+'</div>';
   return h;
 }
 function moneyInput(id,val){return '<div class="money-field"><input id="'+id+'" class="text-input num" type="text" inputmode="decimal" placeholder="0,00" value="'+esc(val||"")+'"><span class="money-cur">€</span></div>';}
@@ -855,7 +875,62 @@ function ocrOverlay(on){
     document.body.appendChild(d);
   } else if(ex){ex.remove();}
 }
+var PROMPT_TICKET='Tu lis un ticket de caisse français. Réponds UNIQUEMENT par un JSON valide, sans texte ni balises autour, au format exact : {"magasin": string|null, "date": "JJ/MM/AAAA"|null, "total_brut": number|null, "remise": number|null, "total_net": number|null, "items": [{"nom": string, "prix": number}]}. Règles : total_brut = total avant remises ; remise = montant de la cagnotte/remise/bon RÉELLEMENT DÉDUIT du total (PAS la cagnotte gagnée sur un article, souvent entre parenthèses) ; total_net = ce qui a été réellement payé = total_brut moins remise ; items = chaque article avec un nom court et courant en français (ex : "Ketchup" et non "HEINZ TOM KETC 50 SU"), prix TTC en euros (nombre, point décimal). Si une valeur est absente, mets null.';
+function visionKey(){try{return localStorage.getItem("treso:visionkey")||"";}catch(e){return "";}}
+function visionProvider(k){k=(k==null?visionKey():k);if(/^sk-ant-/.test(k))return "anthropic";if(/^sk-/.test(k))return "openai";return k?"inconnu":"";}
+function visionModelFor(prov){try{var m=localStorage.getItem("treso:visionmodel");if(m)return m;}catch(e){}return prov==="anthropic"?"claude-3-5-sonnet-latest":"gpt-4o-mini";}
+function fileToDataUrl(file){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result);};r.onerror=rej;r.readAsDataURL(file);});}
+function parseVisionJSON(txt){
+  var m=String(txt||"").match(/\{[\s\S]*\}/);var obj={};try{obj=JSON.parse(m?m[0]:txt);}catch(e){obj={};}
+  function n(x){if(x==null||x==="")return null;var v=parseFloat(String(x).replace(",","."));return isNaN(v)?null:v;}
+  var raw=obj.items||obj.articles||[];var items=[];
+  if(Array.isArray(raw)){raw.forEach(function(it){if(it&&typeof it==="object"){if(("nom" in it)||("prix" in it)){items.push({nom:String(it.nom||"").trim(),prix:n(it.prix)});}else{var k=Object.keys(it)[0];if(k)items.push({nom:k,prix:n(it[k])});}}});}
+  else if(raw&&typeof raw==="object"){Object.keys(raw).forEach(function(k){items.push({nom:k,prix:n(raw[k])});});}
+  items=items.filter(function(it){return it&&it.nom;});
+  var brut=n(obj.total_brut),remise=n(obj.remise),net=n(obj.total_net);
+  if(net==null&&brut!=null)net=Math.round((brut-(remise||0))*100)/100;
+  return {brut:brut,remise:remise||0,net:net,montant:net,date:obj.date||null,merchant:obj.magasin||obj.merchant||null,items:items};
+}
+function visionOCR(file){
+  return fileToDataUrl(file).then(function(dataUrl){
+    var key=visionKey(),prov=visionProvider(key);
+    var b64=dataUrl.split(",")[1]||"";var mt=(dataUrl.match(/^data:(.*?);/)||[])[1]||"image/jpeg";
+    if(prov==="anthropic"){
+      return fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true","content-type":"application/json"},body:JSON.stringify({model:visionModelFor("anthropic"),max_tokens:1024,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mt,data:b64}},{type:"text",text:PROMPT_TICKET}]}]})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error((j.error&&j.error.message)||("HTTP "+r.status));var p=parseVisionJSON((j.content&&j.content[0]&&j.content[0].text)||"");if(j.usage)p._costEur=(j.usage.input_tokens*3+j.usage.output_tokens*15)/1e6*0.93;return p;});});
+    }
+    return fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify({model:visionModelFor("openai"),temperature:0,max_tokens:900,messages:[{role:"user",content:[{type:"text",text:PROMPT_TICKET},{type:"image_url",image_url:{url:dataUrl}}]}]})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error((j.error&&j.error.message)||("HTTP "+r.status));var p=parseVisionJSON((j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||"");if(j.usage)p._costEur=(j.usage.prompt_tokens*0.15+j.usage.completion_tokens*0.60)/1e6*0.93;return p;});});
+  });
+}
+function runVisionOCR(file){
+  ocrOverlay(true);
+  visionOCR(file).then(function(p){
+    ocrOverlay(false);applyOcr(p);
+    var c=(p._costEur!=null)?(" · "+(p._costEur<0.01?"<0,01":p._costEur.toFixed(3).replace(".",","))+" €"):"";
+    showToast((p.net!=null?("Ticket lu : "+formatNum(p.net)+" €"):"Ticket lu")+c);
+  }).catch(function(e){
+    ocrOverlay(false);
+    showToast("IA indispo ("+((e&&e.message)?String(e.message).slice(0,40):"erreur")+") — lecture gratuite");
+    runTesseractOCR(file);
+  });
+}
 function runOCR(file){
+  if(visionKey()){runVisionOCR(file);return;}
+  runTesseractOCR(file);
+}
+function doTestVisionKey(){
+  var inp=document.getElementById("set_visionkey");var k=(inp&&inp.value.trim())||visionKey();
+  if(!k){showToast("Aucune clé à tester");return;}
+  if(!/^sk-/.test(k)){showToast("Clé invalide (sk-…)");return;}
+  var prov=visionProvider(k);state.visionTest="Test en cours…";render();
+  function done(msg){state.visionTest=msg;render();}
+  function fail(e){done("❌ "+((e&&e.message)?String(e.message).slice(0,80):"échec réseau"));}
+  if(prov==="anthropic"){
+    fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true","content-type":"application/json"},body:JSON.stringify({model:visionModelFor("anthropic"),max_tokens:1,messages:[{role:"user",content:"ping"}]})}).then(function(r){return r.json().then(function(j){done(r.ok?("✅ Clé Anthropic valide · modèle "+visionModelFor("anthropic")):("❌ "+((j.error&&j.error.message)||("HTTP "+r.status))));});}).catch(fail);
+  }else{
+    fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+k,"Content-Type":"application/json"},body:JSON.stringify({model:visionModelFor("openai"),max_tokens:1,messages:[{role:"user",content:"ping"}]})}).then(function(r){return r.json().then(function(j){done(r.ok?("✅ Clé OpenAI valide · modèle "+visionModelFor("openai")):("❌ "+((j.error&&j.error.message)||("HTTP "+r.status))));});}).catch(fail);
+  }
+}
+function runTesseractOCR(file){
   ocrOverlay(true);
   var reader=new FileReader();
   reader.onerror=function(){ocrOverlay(false);showToast("Image illisible");};
@@ -943,7 +1018,7 @@ function applyOcr(p){
   if(p.items&&p.items.length)parts.push(p.items.slice(0,5).map(function(it){return it.nom;}).join(", "));
   var note=parts.join(" — ");
   if(note&&!(state.form.note&&state.form.note.trim()))state.form.note=note;
-  state.ocrInfo={brut:p.brut,remise:p.remise,net:p.net,date:p.date,merchant:p.merchant,items:p.items||[]};
+  state.ocrInfo={brut:p.brut,remise:p.remise,net:p.net,date:p.date,merchant:p.merchant,items:p.items||[],_costEur:(p._costEur!=null?p._costEur:null)};
   state.ocrDate=p.date||null;
   render();
 }
@@ -953,6 +1028,7 @@ function ocrInfoHTML(){
   if(oi.remise>0&&oi.brut!=null){h+='<div>Brut '+money(oi.brut)+' − cagnotte '+money(oi.remise)+' = <strong>'+money(oi.net)+' payés</strong></div>';}
   else if(oi.net!=null){h+='<div>Total lu : <strong>'+money(oi.net)+'</strong></div>';}
   if(oi.date)h+='<div style="font-size:12px;color:var(--ink2);">Date ticket : '+esc(oi.date)+' (mouvement daté d\'aujourd\'hui)</div>';
+  if(oi._costEur!=null)h+='<div style="font-size:11.5px;color:var(--ink2);">Coût IA : '+(oi._costEur<0.01?"<0,01":oi._costEur.toFixed(3).replace(".",","))+' €</div>';
   if(oi.items&&oi.items.length){h+='<div style="margin-top:6px;border-top:1px solid rgba(0,0,0,.08);padding-top:6px;">';
     oi.items.forEach(function(it){h+='<div style="display:flex;justify-content:space-between;font-size:13px;padding:2px 0;"><span>'+esc(it.nom)+'</span><span class="num">'+money(it.prix)+'</span></div>';});
     h+='</div>';}
@@ -988,6 +1064,10 @@ document.addEventListener("click",function(ev){
   if(act==="payDette"){payDette(arg);return;}
   if(act==="retraitPerso"){openRetraitPerso();return;}
   if(act==="scanTicket"){openTicketScan();return;}
+  if(act==="revealKey"){var vi=document.getElementById("set_visionkey");if(vi)vi.type=(vi.type==="password"?"text":"password");return;}
+  if(act==="saveVisionKey"){var vk=document.getElementById("set_visionkey");var kk=vk?vk.value.trim():"";if(!kk){showToast("Colle ta clé d'abord");return;}if(!/^sk-/.test(kk)){showToast("Clé invalide (doit commencer par sk-)");return;}try{localStorage.setItem("treso:visionkey",kk);}catch(e){}state.visionTest=null;showToast("Clé enregistrée — "+(visionProvider(kk)==="anthropic"?"Anthropic":"OpenAI"));render();return;}
+  if(act==="testVisionKey"){doTestVisionKey();return;}
+  if(act==="delVisionKey"){state.confirm={message:"Supprimer la clé API de cet appareil ?",danger:true,confirmLabel:"Supprimer",onYes:function(){state.confirm=null;try{localStorage.removeItem("treso:visionkey");}catch(e){}state.visionTest=null;showToast("Clé supprimée");render();}};render();return;}
   if(act==="depensePerso"){openAdd({type:"PERSO",compte:"especes"});return;}
   if(act==="suggestRetraitOk"){addReservePerso(persoBudgetDefault());lset("treso:persoSuggest",weekStartPerso());render();sync().then(render);showToast("Retrait perso réservé");return;}
   if(act==="suggestRetraitNo"){lset("treso:persoSuggest",weekStartPerso());render();return;}
@@ -1034,8 +1114,10 @@ function start(){
   if(param){state.code=(param||"").trim();lset(CK,state.code);}
   else{state.code=lget(CK,"");}
   if(state.code)loadCache();
+  if(!state.readOnly && /^#(scan|reglages|settings)/i.test(location.hash||"")) state.view="settings";
   state.ready=true;
   render();
+  if(!state.readOnly && /scan/i.test(location.hash||"")) setTimeout(function(){var el=document.getElementById("set_visionkey");if(el&&el.scrollIntoView){try{el.scrollIntoView({block:"center"});}catch(e){}}},350);
   if(state.code){sync().then(function(){render();ensureRealtime();});}
 }
 if(window.supabase||document.readyState!=="loading"){start();}else{window.addEventListener("DOMContentLoaded",start);}
