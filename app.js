@@ -691,15 +691,18 @@ function visionSettingsHTML(){
   var h='<div style="height:1px;background:rgba(0,0,0,.10);margin:24px 0 14px;"></div>';
   h+='<p class="section-title">Scan ticket — OCR IA</p>';
   h+='<div class="note-box">Pour lire avec précision les tickets froissés, ajoute une clé API IA (~1–3 €/mois selon ton usage). Sans clé, le scan reste gratuit mais moins précis. <b>La clé reste sur ton téléphone, jamais en base, jamais visible par le mentor.</b></div>';
-  h+='<div style="display:flex;gap:8px;margin:10px 0;"><a class="btn btn-ghost" style="flex:1;text-align:center;text-decoration:none;" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Créer ma clé OpenAI</a><a class="btn btn-ghost" style="flex:1;text-align:center;text-decoration:none;" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Créer ma clé Anthropic</a></div>';
+  h+='<div style="display:flex;gap:8px;margin:10px 0;"><a class="btn btn-primary" style="flex:1;text-align:center;text-decoration:none;" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Créer ma clé Anthropic ✓</a><a class="btn btn-ghost" style="flex:1;text-align:center;text-decoration:none;" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI (avancé)</a></div>';
   if(key){
     h+='<div class="note-box" style="border-left:3px solid var(--accent);">✓ Clé enregistrée'+(provLabel?(" — <b>"+provLabel+"</b>"):"")+' · modèle <b>'+esc(visionModelFor(prov))+'</b></div>';
+    if(prov==="openai")h+='<div class="note-box" style="border-left:3px solid #d9534f;">⚠️ Une clé OpenAI ne fonctionne PAS en direct depuis l\'app (OpenAI bloque les appels navigateur). Utilise plutôt une clé <b>Anthropic</b>.</div>';
     h+='<div style="display:flex;gap:8px;margin-top:8px;"><button class="btn btn-ghost" style="flex:1;" data-act="testVisionKey">Tester la clé</button><button class="btn btn-danger" style="flex:1;" data-act="delVisionKey">Supprimer</button></div>';
     h+='<p class="field-hint" style="margin-top:10px;">Remplacer : colle une nouvelle clé ci-dessous.</p>';
   } else {
-    h+='<p class="field-hint">Recommandé : <b>OpenAI</b> (gpt-4o-mini) — excellent sur les tickets et ~0,01 €/scan.</p>';
+    h+='<p class="field-hint">Recommandé : <b>Anthropic (Claude)</b> — fonctionne directement dans l\'app, ~0,01 €/scan. <i>OpenAI nécessite un serveur, non pris en charge ici.</i></p>';
   }
   h+='<div style="display:flex;gap:6px;align-items:center;"><input id="set_visionkey" class="text-input" type="password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="sk-… (colle ta clé ici)" value="" style="flex:1;"><button class="icon-btn" data-act="revealKey" aria-label="Afficher la clé" style="font-size:18px;">👁</button></div>';
+  var curModel="";try{curModel=localStorage.getItem("treso:visionmodel")||"";}catch(e){}
+  h+='<input id="set_visionmodel" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="Modèle (avancé, optionnel) — défaut : Claude 3.5 Sonnet" value="'+esc(curModel)+'" style="margin-top:6px;font-size:13px;">';
   h+='<button class="btn btn-primary full" style="margin-top:8px;" data-act="saveVisionKey">Enregistrer la clé</button>';
   if(state.visionTest)h+='<div class="note-box" style="margin-top:8px;">'+esc(state.visionTest)+'</div>';
   return h;
@@ -927,7 +930,7 @@ function doTestVisionKey(){
   if(prov==="anthropic"){
     fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true","content-type":"application/json"},body:JSON.stringify({model:visionModelFor("anthropic"),max_tokens:1,messages:[{role:"user",content:"ping"}]})}).then(function(r){return r.json().then(function(j){done(r.ok?("✅ Clé Anthropic valide · modèle "+visionModelFor("anthropic")):("❌ "+((j.error&&j.error.message)||("HTTP "+r.status))));});}).catch(fail);
   }else{
-    fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+k,"Content-Type":"application/json"},body:JSON.stringify({model:visionModelFor("openai"),max_tokens:1,messages:[{role:"user",content:"ping"}]})}).then(function(r){return r.json().then(function(j){done(r.ok?("✅ Clé OpenAI valide · modèle "+visionModelFor("openai")):("❌ "+((j.error&&j.error.message)||("HTTP "+r.status))));});}).catch(fail);
+    fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+k,"Content-Type":"application/json"},body:JSON.stringify({model:visionModelFor("openai"),max_tokens:1,messages:[{role:"user",content:"ping"}]})}).then(function(r){return r.json().then(function(j){done(r.ok?("✅ Clé OpenAI valide · modèle "+visionModelFor("openai")):("❌ "+((j.error&&j.error.message)||("HTTP "+r.status))));});}).catch(function(){done("❌ OpenAI bloque les appels directs depuis l'app (CORS). Crée plutôt une clé Anthropic.");});
   }
 }
 function runTesseractOCR(file){
@@ -1065,7 +1068,7 @@ document.addEventListener("click",function(ev){
   if(act==="retraitPerso"){openRetraitPerso();return;}
   if(act==="scanTicket"){openTicketScan();return;}
   if(act==="revealKey"){var vi=document.getElementById("set_visionkey");if(vi)vi.type=(vi.type==="password"?"text":"password");return;}
-  if(act==="saveVisionKey"){var vk=document.getElementById("set_visionkey");var kk=vk?vk.value.trim():"";if(!kk){showToast("Colle ta clé d'abord");return;}if(!/^sk-/.test(kk)){showToast("Clé invalide (doit commencer par sk-)");return;}try{localStorage.setItem("treso:visionkey",kk);}catch(e){}state.visionTest=null;showToast("Clé enregistrée — "+(visionProvider(kk)==="anthropic"?"Anthropic":"OpenAI"));render();return;}
+  if(act==="saveVisionKey"){var vk=document.getElementById("set_visionkey");var kk=vk?vk.value.trim():"";var vm=document.getElementById("set_visionmodel");var mv=vm?vm.value.trim():"";try{if(mv)localStorage.setItem("treso:visionmodel",mv);else localStorage.removeItem("treso:visionmodel");}catch(e){}if(!kk){if(mv){showToast("Modèle enregistré");render();return;}showToast("Colle ta clé d'abord");return;}if(!/^sk-/.test(kk)){showToast("Clé invalide (doit commencer par sk-)");return;}try{localStorage.setItem("treso:visionkey",kk);}catch(e){}state.visionTest=null;showToast("Clé enregistrée — "+(visionProvider(kk)==="anthropic"?"Anthropic":"OpenAI"));render();return;}
   if(act==="testVisionKey"){doTestVisionKey();return;}
   if(act==="delVisionKey"){state.confirm={message:"Supprimer la clé API de cet appareil ?",danger:true,confirmLabel:"Supprimer",onYes:function(){state.confirm=null;try{localStorage.removeItem("treso:visionkey");}catch(e){}state.visionTest=null;showToast("Clé supprimée");render();}};render();return;}
   if(act==="depensePerso"){openAdd({type:"PERSO",compte:"especes"});return;}
