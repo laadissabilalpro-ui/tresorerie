@@ -538,7 +538,7 @@ function viewAdd(){
       }
       h+='</div>';
     }
-    if(!isV&&!isR){h+='<button type="button" class="btn btn-ghost full" style="margin-top:2px;" data-act="scanTicket">📷 Scanner le ticket</button>';if(state.ocrDate)h+='<div class="note-box">Date lue sur le ticket : '+esc(state.ocrDate)+' — le mouvement reste daté d\'aujourd\'hui.</div>';}
+    if(!isV&&!isR){h+='<button type="button" class="btn btn-ghost full" style="margin-top:2px;" data-act="scanTicket">📷 Scanner le ticket</button>'+ocrInfoHTML();}
     h+='<p class="section-title">Montant</p><div class="amount-field"><input id="montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(f.montant||"")+'"><span class="amount-cur">€</span></div>';
     h+='<p class="section-title">Note / libellé (optionnel)</p><input id="note" class="text-input" type="text" placeholder="ex : Railway, marché de Saint-Paul…" value="'+esc(f.note||"")+'">';
   }
@@ -729,6 +729,7 @@ function captureForm(){
 function openAdd(preset){
   state.editId=null;
   state.ocrDate=null;
+  state.ocrInfo=null;
   state.form={type:"VENTE",compte:"especes",montant:"",note:""};
   if(preset){for(var k in preset)state.form[k]=preset[k];}
   state.view="add";render();
@@ -873,26 +874,90 @@ function runOCR(file){
   };
   reader.readAsDataURL(file);
 }
+var PRODUITS=[
+  [/KETC|KETCH/i,"Ketchup"],[/\bLAIT\b/i,"Lait"],[/BAGUET|\bPAIN\b/i,"Pain"],[/OEUF|ŒUF|\bUFS?\b/i,"Œufs"],[/BEURRE/i,"Beurre"],
+  [/GRANA|PADANO|PARMESAN/i,"Grana Padano"],[/EMMENT|CAMEMB|GRUY|\bFROMAGE\b|CHEVRE/i,"Fromage"],[/YAOURT|\bYOP\b|\bFETA\b|PHETA/i,"Yaourt"],
+  [/\bEAU\b|EVIAN|VOLVIC|CRISTAL/i,"Eau"],[/COCA/i,"Coca-Cola"],[/\bJUS\b|ORANGINA/i,"Jus de fruit"],[/CAF[EÉ]/i,"Café"],[/\bTH[EÉ]\b/i,"Thé"],
+  [/SUCRE/i,"Sucre"],[/FARINE/i,"Farine"],[/\bRIZ\b/i,"Riz"],[/P[AÂ]TES|SPAGHE|MACARO|PENNE/i,"Pâtes"],[/HUILE/i,"Huile"],[/MAYO/i,"Mayonnaise"],
+  [/MOUTARD/i,"Moutarde"],[/\bSEL\b/i,"Sel"],[/POIVRE/i,"Poivre"],[/TOMATE/i,"Tomates"],[/\bPOMMES?\b/i,"Pommes"],[/BANANE/i,"Bananes"],
+  [/POULET/i,"Poulet"],[/BOEUF|BŒUF|STEAK|HACH[EÉ]/i,"Bœuf"],[/JAMBON/i,"Jambon"],[/POISSON|\bTHON\b|SAUMON/i,"Poisson"],
+  [/CHOCOLAT|CHOCO/i,"Chocolat"],[/BISCUIT|G[AÂ]TEAU/i,"Biscuits"],[/C[EÉ]R[EÉ]AL/i,"Céréales"],[/SAVON/i,"Savon"],[/SHAMPO/i,"Shampoing"],
+  [/DENTIFRIC/i,"Dentifrice"],[/PAPIER\s*TOI|\bPQ\b/i,"Papier toilette"],[/ESSUIE/i,"Essuie-tout"],[/LESSIVE/i,"Lessive"],[/VAISSELLE/i,"Liquide vaisselle"],
+  [/SODA|FANTA|SPRITE|PEPSI/i,"Soda"],[/BI[EÈ]RE|HEINEKEN|DESPE/i,"Bière"],[/\bVIN\b/i,"Vin"],[/PIZZA/i,"Pizza"],[/FRITE/i,"Frites"],[/GLACE/i,"Glace"],
+  [/CR[EÈ]ME/i,"Crème"],[/SEMOULE/i,"Semoule"],[/LENTILLE/i,"Lentilles"],[/HARICOT/i,"Haricots"],[/OIGNON/i,"Oignons"],[/CAROTTE/i,"Carottes"],
+  [/SALADE|LAITUE/i,"Salade"],[/DEODOR|SENSITIVE/i,"Déodorant"]
+];
+var ENSEIGNES=["CARREFOUR","E.LECLERC","LECLERC","INTERMARCHE","SUPER U","HYPER U","U EXPRESS","SYSTEME U","MAGASIN U","CASINO","AUCHAN","LIDL","ALDI","MONOPRIX","FRANPRIX","CORA","JUMBO","SCORE","RUN MARCHE","VINDEMIA","LEADER PRICE","VIVAL","SPAR","DECATHLON","TOTALENERGIES","TOTAL ACCESS","SHELL","ESSO"];
+function cleanItemLabel(s){
+  s=String(s||"").toUpperCase();
+  s=s.replace(/\b\d{3,}\b/g," ");
+  s=s.replace(/^\s*\d+([.,]\d+)?\s*(X|KG|G|L|CL|ML|PCS|PC)?\b/i," ");
+  s=s.replace(/\b\d+([.,]\d+)?\s*(KG|G|L|CL|ML|GR|PCS|PC|SU|X\d*)\b/gi," ");
+  for(var i=0;i<PRODUITS.length;i++){ if(PRODUITS[i][0].test(s)) return PRODUITS[i][1]; }
+  s=s.replace(/[^A-Za-zÀ-ÿ\s]/g," ").replace(/\s+/g," ").trim();
+  var words=s.split(" ").filter(function(w){return w.length>=2;}).slice(0,3);
+  s=words.join(" ").toLowerCase();
+  return s?s.charAt(0).toUpperCase()+s.slice(1):"";
+}
 function parseTicket(text){
   text=String(text||"");
   var lines=text.split(/\r?\n/).map(function(l){return l.replace(/\s+/g," ").trim();}).filter(Boolean);
-  function toNum(a,b){return parseFloat(a+"."+b);}
-  var amount=null,kw=/(TOTAL|TTC|NET\s*[AÀ]\s*PAYER|[AÀ]\s*PAYER|MONTANT)/i,kwAmts=[];
-  lines.forEach(function(l){ if(kw.test(l)){var m,re=/(\d{1,4})[.,](\d{2})(?!\d)/g;while((m=re.exec(l))){kwAmts.push(toNum(m[1],m[2]));}} });
-  if(kwAmts.length){amount=Math.max.apply(null,kwAmts);}
-  else{var all=[],m2,re2=/(\d{1,4})[.,](\d{2})(?!\d)/g;while((m2=re2.exec(text))){all.push(toNum(m2[1],m2[2]));}if(all.length)amount=Math.max.apply(null,all);}
+  function toNum(s){return parseFloat(String(s).replace(",","."));}
+  function lastAmt(l){var m=l.match(/(\d{1,4})[.,](\d{2})(?!\d)/g);return m?toNum(m[m.length-1]):null;}
+  var parenAmt=/\(\s*\d{1,3}[.,]\d{2}\s*\)/; // montant entre parenthèses = cagnotte GAGNÉE, à ignorer
+  var totalKw=/(TOTAL|\bTTC\b|MONTANT\s*D|[AÀ]\s*PAYER)/i;
+  var remiseKw=/(CAGNOTTE|REMISE|BON\s*(DE\s*)?R[EÉ]DUC|R[EÉ]DUCTION|\bAVOIR\b|FID[EÉ]LIT|RISTOURNE)/i;
+  var skipItem=/(TOTAL|\bTTC\b|\bTVA\b|MONTANT|[AÀ]\s*PAYER|CAGNOT|REMISE|\bBON\b|AVOIR|FID[EÉ]LIT|RENDU|ESP[EÈ]CES|\bCB\b|CARTE|CHEQUE|MONNAIE|SOUS.?TOTAL|ARTICLE|\bMOD\b|^\s*\d+\s*%|MERCI|DUPLICATA)/i;
+  var totalVals=[],remiseVals=[];
+  lines.forEach(function(l){
+    if(parenAmt.test(l))return;
+    var a=lastAmt(l); if(a==null)return;
+    if(remiseKw.test(l)){remiseVals.push(Math.abs(a));}
+    else if(totalKw.test(l)&&!/SOUS.?TOTAL/i.test(l)){totalVals.push(a);}
+  });
+  var brut=totalVals.length?Math.max.apply(null,totalVals):null;
+  if(brut==null){var all=[],m,re=/(\d{1,4})[.,](\d{2})(?!\d)/g;while((m=re.exec(text))){all.push(toNum(m[1]+","+m[2]));}if(all.length)brut=Math.max.apply(null,all);}
+  var remise=remiseVals.reduce(function(a,b){return a+b;},0);
+  var net=brut!=null?Math.round((brut-remise)*100)/100:null;
   var date=null,dm=text.match(/(\d{2})[\/.\-](\d{2})[\/.\-](\d{2,4})/);
   if(dm){var y=dm[3].length===2?("20"+dm[3]):dm[3];date=dm[1]+"/"+dm[2]+"/"+y;}
-  var merchant=null;
-  for(var i=0;i<lines.length&&i<6;i++){var l=lines[i];var letters=(l.match(/[A-Za-zÀ-ÿ]/g)||[]).length;
-    if(letters>=3&&l.length<=28&&!/\d{2}[\/.\-]\d{2}/.test(l)&&!/(TICKET|RE[ÇC]U|FACTURE|TVA|SIRET|^TEL|EUR\b|CAISSE)/i.test(l)){merchant=l;break;}}
-  return {montant:amount,date:date,merchant:merchant};
+  var up=text.toUpperCase(),merchant=null;
+  for(var e=0;e<ENSEIGNES.length;e++){if(up.indexOf(ENSEIGNES[e])>=0){merchant=ENSEIGNES[e].charAt(0)+ENSEIGNES[e].slice(1).toLowerCase();break;}}
+  if(!merchant){for(var i=0;i<lines.length&&i<5;i++){var l2=lines[i];var letters=(l2.match(/[A-Za-zÀ-ÿ]/g)||[]).length;
+    if(letters>=3&&l2.length<=26&&!/\d{1,4}[.,]\d{2}/.test(l2)&&!/\d{2}[\/.\-]\d{2}/.test(l2)&&!/(TICKET|RE[ÇC]U|FACTURE|TVA|SIRET|TEL|CAISSE|MERCI|DUPLICATA)/i.test(l2)){merchant=l2.charAt(0).toUpperCase()+l2.slice(1).toLowerCase();break;}}}
+  var items=[];
+  lines.forEach(function(l){
+    if(skipItem.test(l)||parenAmt.test(l))return;
+    var amts=l.match(/(\d{1,4})[.,](\d{2})(?!\d)/g); if(!amts)return;
+    var price=toNum(amts[amts.length-1]); if(!(price>0)||price>300)return;
+    var idx=l.lastIndexOf(amts[amts.length-1]); var label=cleanItemLabel(l.slice(0,idx));
+    if(label&&label.length>=2)items.push({nom:label,prix:price});
+  });
+  if(items.length>15)items=items.slice(0,15);
+  return {brut:brut,remise:remise,net:net,montant:net,date:date,merchant:merchant,items:items};
 }
 function applyOcr(p){
   if(p.montant!=null)state.form.montant=String(p.montant).replace(".",",");
-  if(p.merchant&&!(state.form.note&&state.form.note.trim()))state.form.note=p.merchant.charAt(0).toUpperCase()+p.merchant.slice(1).toLowerCase();
+  var parts=[];
+  if(p.merchant)parts.push(p.merchant);
+  if(p.items&&p.items.length)parts.push(p.items.slice(0,5).map(function(it){return it.nom;}).join(", "));
+  var note=parts.join(" — ");
+  if(note&&!(state.form.note&&state.form.note.trim()))state.form.note=note;
+  state.ocrInfo={brut:p.brut,remise:p.remise,net:p.net,date:p.date,merchant:p.merchant,items:p.items||[]};
   state.ocrDate=p.date||null;
   render();
+}
+function ocrInfoHTML(){
+  var oi=state.ocrInfo; if(!oi)return "";
+  var h='<div class="note-box" style="margin-top:8px;">';
+  if(oi.remise>0&&oi.brut!=null){h+='<div>Brut '+money(oi.brut)+' − cagnotte '+money(oi.remise)+' = <strong>'+money(oi.net)+' payés</strong></div>';}
+  else if(oi.net!=null){h+='<div>Total lu : <strong>'+money(oi.net)+'</strong></div>';}
+  if(oi.date)h+='<div style="font-size:12px;color:var(--ink2);">Date ticket : '+esc(oi.date)+' (mouvement daté d\'aujourd\'hui)</div>';
+  if(oi.items&&oi.items.length){h+='<div style="margin-top:6px;border-top:1px solid rgba(0,0,0,.08);padding-top:6px;">';
+    oi.items.forEach(function(it){h+='<div style="display:flex;justify-content:space-between;font-size:13px;padding:2px 0;"><span>'+esc(it.nom)+'</span><span class="num">'+money(it.prix)+'</span></div>';});
+    h+='</div>';}
+  h+='<div style="font-size:11.5px;color:var(--ink2);margin-top:6px;">Vérifie et corrige avant de valider.</div></div>';
+  return h;
 }
 function delDette(id){
   state.confirm={message:"Supprimer cette dette ?",danger:true,confirmLabel:"Supprimer",onYes:function(){
