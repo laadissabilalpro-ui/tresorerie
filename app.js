@@ -1058,7 +1058,8 @@ document.addEventListener("click",function(ev){
 
   if(state.readOnly){
     var ok={retrySync:1,onbCode:1};
-    if(!ok[act])return;
+    var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"));
+    if(!ok[act]&&!navOk)return;
   }
 
   if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();render();return;}
