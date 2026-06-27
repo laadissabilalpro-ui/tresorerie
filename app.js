@@ -178,7 +178,7 @@ function buildLedger(s, movs, debts, jours){
       else if(m.type==="REMISE"){
         lines.push({label:"Espèces",sub:"Remise vers la banque",recetteC:0,debitC:a});
         lines.push({label:"Crédit Agricole",sub:"Remise reçue",recetteC:a,debitC:0});
-      } else { var special=(m.note&&(m.note.indexOf("Paiement dette")===0||m.note.indexOf("Perso · ")===0)); lines.push({label:cn,sub:(special?m.note:(TYPES[m.type].label+(m.note?" — "+m.note:""))),recetteC:0,debitC:a}); }
+      } else { var subL; if(m.note===RESERVE_MARK){subL="Retrait perso";} else if(m.note&&m.note.indexOf("Paiement dette")===0){subL=m.note;} else {subL=TYPES[m.type].label+(m.note?" — "+m.note:"");} lines.push({label:cn,sub:subL,recetteC:0,debitC:a}); }
     }
     var rec=0,deb=0;
     for(var L2=0;L2<lines.length;L2++){rec+=lines[L2].recetteC;deb+=lines[L2].debitC;}
@@ -331,14 +331,19 @@ var state={
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 var RESERVE_MARK="__RESERVE_PERSO__";
-function activeMovs(){return state.movements.filter(function(m){return !m._deleted && m.note!==RESERVE_MARK;});}
-function activeDebts(){return state.debts.filter(function(d){return !d._deleted;});}
 function isPersoDep(m){return typeof m.note==="string"&&m.note.indexOf("Perso · ")===0;}
-function persoBudgetDefault(){var v=parseMontant(lget("treso:persoBudget","160"));return (isNaN(v)||v<=0)?160:v;}
-function persoResetDay(){var v=parseInt(lget("treso:persoDay","4"),10);return isNaN(v)?4:v;}
-function weekStartPerso(){var d=new Date();d.setHours(0,0,0,0);var rd=persoResetDay();var diff=(d.getDay()-rd+7)%7;d.setDate(d.getDate()-diff);return dateKey(d);}
-function persoWeek(){var ws=weekStartPerso(),td=today(),R=0,C=0,items=[];for(var i=0;i<state.movements.length;i++){var m=state.movements[i];if(m._deleted)continue;var inWk=(m.date>=ws&&m.date<=td);if(m.note===RESERVE_MARK){if(inWk){R+=toC(m.montant);items.push({date:m.date,ts:m.ts||0,kind:"reserve",label:"Retrait perso",montantC:toC(m.montant)});}}else if(isPersoDep(m)){if(inWk){C+=toC(m.montant);items.push({date:m.date,ts:m.ts||0,kind:"dep",label:(m.note||"").replace(/^Perso · /,""),montantC:toC(m.montant),compte:m.compte});}}}items.sort(function(a,b){return a.date<b.date?-1:a.date>b.date?1:(a.ts-b.ts);});return {R:R,C:C,reste:Math.max(0,R-C),ws:ws,items:items};}
-function addReservePerso(montant){state.movements.push({id:uuid(),date:today(),ts:Date.now(),type:"CHARGE",compte:"especes",montant:round2(montant),note:RESERVE_MARK,_dirty:true});saveCache();}
+function isRetraitPerso(m){return m.type==="RETRAIT"||m.note===RESERVE_MARK;}
+function activeMovs(){return state.movements.filter(function(m){return !m._deleted && !isPersoDep(m);});}
+function activeDebts(){return state.debts.filter(function(d){return !d._deleted;});}
+function persoCagnotte(){
+  var R=0,D=0,items=[];
+  for(var i=0;i<state.movements.length;i++){var m=state.movements[i];if(m._deleted)continue;
+    if(isPersoDep(m)){D+=toC(m.montant);items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"dep",label:(m.note||"").replace(/^Perso · /,"")||"Dépense",montantC:toC(m.montant)});}
+    else if(isRetraitPerso(m)){R+=toC(m.montant);items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"ret",label:"Retrait"+(m.compte&&COMPTES[m.compte]?" ("+COMPTES[m.compte].nom+")":""),montantC:toC(m.montant)});}
+  }
+  items.sort(function(a,b){return a.date<b.date?1:a.date>b.date?-1:(b.ts-a.ts);});
+  return {retraitsC:R,depensesC:D,soldeC:R-D,items:items};
+}
 
 /* ===================== TOAST / COPIE ===================== */
 var toastT=null;
@@ -381,7 +386,7 @@ function render(){
     if(!navigator.onLine){app.innerHTML=state.readOnly?msgScreen("Hors-ligne","Connecte-toi à internet pour afficher les données partagées."):viewOnbSettings();return;}
     app.innerHTML=state.readOnly?msgScreen("Aucune donnée","Aucune donnée n'est encore partagée pour ce code de consultation."):viewOnbSettings();return;
   }
-  if(state.readOnly) state.view="registre"; // sa page unique
+  if(state.readOnly && state.view!=="perso") state.view="registre"; // registre, + page perso accessible
   else if(state.view==="add"||state.view==="settings"){} // ok
   var html=header();
   html+='<main class="content">';
@@ -390,6 +395,7 @@ function render(){
   else if(state.view==="movements")html+=viewMovements();
   else if(state.view==="resume")html+=viewResume();
   else if(state.view==="registre")html+=viewRegistre();
+  else if(state.view==="perso")html+=viewPerso();
   else if(state.view==="settings")html+=viewSettings();
   else html+=viewHome();
   html+="</main>";
@@ -402,7 +408,7 @@ function render(){
 }
 
 function header(){
-  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",settings:"Réglages"};
+  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",settings:"Réglages"};
   var showBack=(!state.readOnly)&&(state.view==="add"||state.view==="settings");
   var left=showBack?'<button class="icon-btn" data-act="back" aria-label="Retour">'+ic("home")+'</button>':'<div class="header-brand"><span class="brand-dot"></span></div>';
   var right;
@@ -414,27 +420,31 @@ function header(){
   return '<header class="header">'+left+'<div class="header-title"><h1>'+ttl+'</h1>'+sub+'</div>'+right+'</header>';
 }
 
-function persoPanelHTML(actions){
-  var pw=persoWeek();
-  var h='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><p class="section-title flush">Perso · semaine</p>'+(pw.R>0?'<span class="num" style="font-weight:800;">reste '+money(toE(pw.reste))+'</span>':'')+'</div>';
-  if(pw.R<=0&&pw.C<=0){ h+='<p class="muted" style="margin:2px 0 8px;">Aucun retrait perso cette semaine.</p>'; }
-  else {
-    var pct=pw.R>0?Math.min(100,Math.round(pw.C/pw.R*100)):0;
-    h+='<div style="height:9px;background:var(--bg);border-radius:6px;overflow:hidden;margin:8px 0 6px;"><div style="height:100%;width:'+pct+'%;background:var(--accent);"></div></div>';
-    h+='<div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink2);"><span>Réservé '+money(toE(pw.R))+'</span><span>Dépensé '+money(toE(pw.C))+'</span></div>';
-    if(pw.items.length){
-      h+='<div style="margin-top:10px;border-top:1px solid rgba(0,0,0,.08);padding-top:4px;">';
-      pw.items.forEach(function(it){
-        var dm=it.date.slice(8,10)+'/'+it.date.slice(5,7),amt,lbl;
-        if(it.kind==="reserve"){ lbl="Retrait perso (mise de côté)"; amt='<span class="num" style="color:var(--ink2);">'+money(toE(it.montantC))+'</span>'; }
-        else { lbl=(it.label||"Dépense")+(it.compte&&COMPTES[it.compte]?' · '+COMPTES[it.compte].nom:''); amt='<span class="num neg">−'+money(toE(it.montantC))+'</span>'; }
-        h+='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:4px 0;font-size:13px;"><span style="color:var(--ink);">'+dm+' · '+esc(lbl)+'</span>'+amt+'</div>';
-      });
-      h+='</div>';
-    }
-    if(actions)h+='<div style="text-align:right;margin-top:6px;"><button style="background:none;border:none;color:var(--ink2);font-size:12px;text-decoration:underline;cursor:pointer;padding:2px;" data-act="annulRetraitPerso">Annuler le retrait</button></div>';
+function viewPerso(){
+  var ro=state.readOnly;
+  var cag=persoCagnotte();
+  var h='<div class="view">';
+  h+='<div class="card total-card"><p class="total-label">Mon argent perso</p><p class="total-amount num'+(cag.soldeC<0?" neg":"")+'">'+money(toE(cag.soldeC))+'</p>';
+  h+='<div style="border-top:1px solid rgba(255,255,255,.15);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;font-size:13px;opacity:.9;"><span>Retiré '+money(toE(cag.retraitsC))+'</span><span>Dépensé '+money(toE(cag.depensesC))+'</span></div>';
+  h+='<p class="total-hint">Ce que tu t\'es versé pour toi, moins tes dépenses perso. N\'affecte pas les comptes du business.</p></div>';
+  if(!ro){
+    h+='<div class="quick-row"><button class="quick-btn" data-act="retraitPerso"><span class="q-plus">+</span> Retrait perso</button><button class="quick-btn" data-act="depensePerso"><span class="q-plus">−</span> Dépense perso</button></div>';
   }
-  if(actions)h+='<div class="quick-row" style="margin-top:12px;"><button class="quick-btn" data-act="retraitPerso"><span class="q-plus">+</span> Retrait perso</button><button class="quick-btn" data-act="depensePerso"><span class="q-plus">−</span> Dépense perso</button></div>';
+  if(!cag.items.length){
+    h+='<div class="empty"><p>Aucun mouvement perso pour l\'instant.'+(ro?'':' Fais un « Retrait perso » quand tu prends de l\'argent pour toi.')+'</p></div>';
+  } else {
+    h+='<p class="section-title">Détail</p><div class="mov-list">';
+    cag.items.forEach(function(it){
+      var dm=it.date.slice(8,10)+'/'+it.date.slice(5,7);
+      var isRet=it.kind==="ret";
+      var cls=isRet?"pos":"out",sign=isRet?"+":"−";
+      var sub=isRet?"Argent pris pour toi":"Dépense perso";
+      var del=(!ro&&it.id)?'<button class="icon-btn small" data-act="delMov" data-arg="'+it.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button>':'';
+      h+='<div class="mov-row"><div class="mov-main"><div class="mov-top"><span class="mov-type">'+esc(it.label)+'</span><span class="mov-heure">'+dm+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(toE(it.montantC))+' €</span>'+del+'</div></div>';
+    });
+    h+='</div>';
+  }
+  h+='<button class="link-row" data-act="nav" data-arg="'+(ro?"registre":"home")+'">'+ic("chevron")+' Retour</button>';
   h+='</div>';
   return h;
 }
@@ -447,11 +457,7 @@ function viewHome(){
   var totalConso=dispoEsp+bal.ca+bal.revolut;
   var alertes=computeAlertes(bal,s);
   var negC=function(c){return c<0?" neg":"";};
-  var pw=persoWeek();
   var h='<div class="view">';
-  if((new Date().getDay()===persoResetDay()) && pw.R<=0 && lget("treso:persoSuggest","")!==pw.ws){
-    h+='<div class="card" style="background:var(--accentSoft);border-color:transparent;"><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;color:var(--accent2);font-weight:700;font-size:14px;">'+ic("alert")+'<span>C\'est jeudi</span></div><p style="margin:0 0 10px;font-size:13.5px;color:var(--accent2);line-height:1.4;">Enregistrer ton retrait perso de '+money(persoBudgetDefault())+' pour la semaine ?</p><div style="display:flex;gap:8px;"><button class="btn btn-primary" style="flex:1;" data-act="suggestRetraitOk">Oui, '+money(persoBudgetDefault())+'</button><button class="btn btn-ghost" data-act="suggestRetraitNo">Plus tard</button></div></div>';
-  }
   if(alertes.length){
     h+='<div class="card alert-card"><div class="alert-head">'+ic("alert")+'<span>Alertes</span></div>';
     for(var i=0;i<alertes.length;i++)h+='<p class="alert-line">'+esc(alertes[i])+'</p>';
@@ -477,18 +483,16 @@ function viewHome(){
   h+='<div class="acct-line strong"><span>Disponible</span><span class="num'+negC(dispoEsp)+'">'+money(toE(dispoEsp))+'</span></div></div>';
   h+='<div class="card acct"><div class="acct-line strong only"><span>Crédit Agricole</span><span class="num'+negC(bal.ca)+'">'+money(toE(bal.ca))+'</span></div></div>';
   h+='<div class="card acct"><div class="acct-line strong only"><span>Revolut</span><span class="num'+negC(bal.revolut)+'">'+money(toE(bal.revolut))+'</span></div></div>';
-  var dispoLibreC=totalConso-pw.reste;
-  h+='<div class="card total-card"><p class="total-label">Total</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p>';
-  h+='<div style="border-top:1px solid rgba(255,255,255,.15);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:13px;opacity:.85;">Disponible (libre)</span><span class="num" style="font-size:20px;font-weight:800;'+(dispoLibreC<0?"color:#FF9B9B;":"")+'">'+money(toE(dispoLibreC))+'</span></div>';
-  h+='<p class="total-hint">Disponible = Total − mise de côté perso non dépensée</p></div>';
-  h+=persoPanelHTML(true);
+  h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p><p class="total-hint">Espèces dispo + Crédit Agricole + Revolut</p></div>';
+  var cag=persoCagnotte();
+  h+='<button class="link-row" data-act="nav" data-arg="perso"><span>💰 Mon argent perso : '+money(toE(cag.soldeC))+'</span>'+ic("chevron")+'</button>';
   h+='<button class="link-row" data-act="nav" data-arg="registre">Voir le registre complet '+ic("chevron")+'</button>';
   h+='</div>';
   return h;
 }
 
 function viewAdd(){
-  var f=state.form,isV=f.type==="VENTE",isR=f.type==="REMISE",isP=f.type==="REMB";
+  var f=state.form,isV=f.type==="VENTE",isR=f.type==="REMISE",isP=f.type==="REMB",isPerso=f.type==="PERSO",isRet=f.type==="RETRAIT";
   var choices=[{id:"especes",label:"Espèces"},{id:"ca",label:isV?"CB":"Crédit Agricole",sub:isV?"Crédit Agricole":null},{id:"revolut",label:"Revolut"}];
   var h='<div class="view">';
   h+='<p class="section-title">Type de mouvement</p><div class="type-grid">';
@@ -531,16 +535,20 @@ function viewAdd(){
       h+='</div>';
     }else if(isR){
       h+='<p class="section-title">Sens du transfert</p><div class="transfer-box">Espèces <span class="arrow">→</span> Crédit Agricole</div>';
+    }else if(isPerso){
+      h+='<div class="note-box">Dépense payée avec <b>ton argent perso</b> (ta cagnotte). Ça n\'affecte pas les comptes du business.</div>';
     }else{
-      h+='<p class="section-title">Compte à débiter</p><div class="seg">';
+      h+='<p class="section-title">'+(isRet?"Retiré depuis quel compte ?":"Compte à débiter")+'</p><div class="seg">';
       for(var k=0;k<choices.length;k++){var c2=choices[k];
         h+='<button class="seg-btn'+(f.compte===c2.id?" active":"")+'" data-act="compte" data-arg="'+c2.id+'">'+c2.label+'</button>';
       }
       h+='</div>';
+      if(isRet)h+='<div class="note-box">Cet argent <b>sort du business</b> et va dans ta cagnotte perso.</div>';
     }
-    if(!isV&&!isR){h+='<button type="button" class="btn btn-ghost full" style="margin-top:2px;" data-act="scanTicket">📷 Scanner le ticket</button>'+ocrInfoHTML();}
+    if(isPerso||f.type==="ACHAT"||f.type==="CHARGE"){h+='<button type="button" class="btn btn-ghost full" style="margin-top:2px;" data-act="scanTicket">📷 Scanner le ticket</button>'+ocrInfoHTML();}
     h+='<p class="section-title">Montant</p><div class="amount-field"><input id="montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(f.montant||"")+'"><span class="amount-cur">€</span></div>';
-    h+='<p class="section-title">Note / libellé (optionnel)</p><input id="note" class="text-input" type="text" placeholder="ex : Railway, marché de Saint-Paul…" value="'+esc(f.note||"")+'">';
+    var notePh=isPerso?"ex : essence, courses, coiffeur…":(isRet?"ex : retrait semaine (optionnel)":"ex : Railway, marché de Saint-Paul…");
+    h+='<p class="section-title">'+(isPerso?"Sur quoi ? (libellé)":"Note / libellé (optionnel)")+'</p><input id="note" class="text-input" type="text" placeholder="'+notePh+'" value="'+esc(f.note||"")+'">';
   }
   h+='<button class="btn btn-primary btn-lg full" data-act="submitMov">'+ic("check")+(isP?"Payer la dette":(state.editId?"Enregistrer les modifications":"Valider"))+'</button>';
   if(state.editId)h+='<button class="btn btn-danger full" data-act="delMov" data-arg="'+state.editId+'">'+ic("trash")+'Supprimer ce mouvement</button>';
@@ -654,9 +662,9 @@ function viewRegistre(){
   var map={};movs.forEach(function(m){(map[m.date]=map[m.date]||[]).push(m);});
   var rows=Object.keys(map).sort().map(function(k){return {date:k,caTotal:caJourC(map[k]).total};});
   var h='<div class="view">';
-  var pwR=persoWeek();var dispoLibR=totalC-pwR.reste;
-  h+='<div class="card total-card"><p class="total-label">Total</p><p class="total-amount num'+(totalC<0?" neg":"")+'">'+money(toE(totalC))+'</p><div style="border-top:1px solid rgba(255,255,255,.15);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:13px;opacity:.85;">Disponible (libre)</span><span class="num" style="font-size:20px;font-weight:800;'+(dispoLibR<0?"color:#FF9B9B;":"")+'">'+money(toE(dispoLibR))+'</span></div></div>';
-  h+=persoPanelHTML(!ro);
+  h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+(totalC<0?" neg":"")+'">'+money(toE(totalC))+'</p></div>';
+  var cag=persoCagnotte();
+  h+='<button class="link-row" data-act="nav" data-arg="perso"><span>💰 Argent perso : '+money(toE(cag.soldeC))+' — voir le détail</span>'+ic("chevron")+'</button>';
   if(rows.length)h+='<div class="card"><p class="section-title flush">CA par jour</p>'+chartHTML(rows)+'</div>';
   h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro)+'</div>';
   h+=dettesPanelHTML(debts,ro);
@@ -846,10 +854,6 @@ function settleDette(id){
   saveCache();render();sync().then(render);showToast("Dette réglée");
 }
 function payDette(id){var d=findDette(id);if(!d)return;openAdd({type:"REMB",dette_id:id,compte:"especes",montant:String(round2(d.montant)).replace(".",",")});}
-function openRetraitPerso(){
-  state.modal={title:"Retrait perso (mise de côté)",fields:[{id:"r_montant",label:"Montant réservé (€)",num:true,value:String(persoBudgetDefault()).replace(".",","),placeholder:"160"}],confirmLabel:"Réserver",onConfirm:function(v){var n=parseMontant(v.r_montant);if(!(n>0)){showToast("Montant invalide");return false;}addReservePerso(n);showToast("Retrait perso réservé");}};
-  render();
-}
 function ensureTesseract(){
   if(window.Tesseract)return Promise.resolve();
   if(state._tessP)return state._tessP;
@@ -1065,16 +1069,13 @@ document.addEventListener("click",function(ev){
   if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if((arg==="VENTE"||arg==="REMB"||arg==="PERSO")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
   if(act==="selDette"){state.form.dette_id=arg;var sd=findDette(arg);if(sd)state.form.montant=String(round2(sd.montant)).replace(".",",");render();return;}
   if(act==="payDette"){payDette(arg);return;}
-  if(act==="retraitPerso"){openRetraitPerso();return;}
+  if(act==="retraitPerso"){openAdd({type:"RETRAIT",compte:"especes"});return;}
   if(act==="scanTicket"){openTicketScan();return;}
   if(act==="revealKey"){var vi=document.getElementById("set_visionkey");if(vi)vi.type=(vi.type==="password"?"text":"password");return;}
   if(act==="saveVisionKey"){var vk=document.getElementById("set_visionkey");var kk=vk?vk.value.trim():"";var vm=document.getElementById("set_visionmodel");var mv=vm?vm.value.trim():"";try{if(mv)localStorage.setItem("treso:visionmodel",mv);else localStorage.removeItem("treso:visionmodel");}catch(e){}if(!kk){if(mv){showToast("Modèle enregistré");render();return;}showToast("Colle ta clé d'abord");return;}if(!/^sk-/.test(kk)){showToast("Clé invalide (doit commencer par sk-)");return;}try{localStorage.setItem("treso:visionkey",kk);}catch(e){}state.visionTest=null;showToast("Clé enregistrée — "+(visionProvider(kk)==="anthropic"?"Anthropic":"OpenAI"));render();return;}
   if(act==="testVisionKey"){doTestVisionKey();return;}
   if(act==="delVisionKey"){state.confirm={message:"Supprimer la clé API de cet appareil ?",danger:true,confirmLabel:"Supprimer",onYes:function(){state.confirm=null;try{localStorage.removeItem("treso:visionkey");}catch(e){}state.visionTest=null;showToast("Clé supprimée");render();}};render();return;}
   if(act==="depensePerso"){openAdd({type:"PERSO",compte:"especes"});return;}
-  if(act==="suggestRetraitOk"){addReservePerso(persoBudgetDefault());lset("treso:persoSuggest",weekStartPerso());render();sync().then(render);showToast("Retrait perso réservé");return;}
-  if(act==="suggestRetraitNo"){lset("treso:persoSuggest",weekStartPerso());render();return;}
-  if(act==="annulRetraitPerso"){state.confirm={message:"Annuler le retrait perso réservé cette semaine ?",danger:true,confirmLabel:"Annuler le retrait",onYes:function(){state.confirm=null;var ws=weekStartPerso(),td=today();for(var i=0;i<state.movements.length;i++){var mm=state.movements[i];if(!mm._deleted&&mm.note===RESERVE_MARK&&mm.date>=ws&&mm.date<=td){mm._deleted=true;mm._dirty=false;}}saveCache();render();sync().then(render);showToast("Retrait annulé");}};render();return;}
   if(act==="compte"){captureForm();state.form.compte=arg;render();return;}
   if(act==="submitMov"){captureForm();submitMov();return;}
   if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};state.view="add";render();}return;}
