@@ -328,7 +328,7 @@ var state={
   code:lget("treso:code",""),
   readOnly:false,
   settings:null, movements:[], debts:[], jours:{}, joursDirty:{},
-  view:"home", form:null, resumeDay:null, editId:null,
+  view:"home", form:null, resumeDay:null, editId:null, movDay:null,
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 var RESERVE_MARK="__RESERVE_PERSO__";
@@ -406,6 +406,7 @@ function render(){
   app.innerHTML=html;
   if(!state.readOnly && state.view==="add"){var mi=document.getElementById("montant");if(mi)setTimeout(function(){try{mi.focus();}catch(e){}},120);}
   if(state.modal){var f0=document.getElementById(state.modal.fields[0].id);if(f0)setTimeout(function(){try{f0.focus();}catch(e){}},120);}
+  if(!state.readOnly && state.view==="movements"){var md=document.getElementById("mov_date");if(md)md.addEventListener("change",function(){var v=md.value||today();if(v>today())v=today();state.movDay=v;render();});}
 }
 
 function header(){
@@ -558,10 +559,18 @@ function viewAdd(){
 }
 
 function viewMovements(){
-  var tmovs=activeMovs().filter(function(m){return m.date===today();}).sort(function(a,b){return b.ts-a.ts;});
+  var day=state.movDay||today();
+  var isToday=day===today();
+  var tmovs=activeMovs().filter(function(m){return m.date===day;}).sort(function(a,b){return b.ts-a.ts;});
   var h='<div class="view">';
+  h+='<div class="card" style="display:flex;align-items:center;gap:6px;justify-content:space-between;padding:10px 12px;">';
+  h+='<button class="icon-btn" data-act="movDayShift" data-arg="-1" aria-label="Jour précédent" style="font-size:22px;line-height:1;">‹</button>';
+  h+='<div style="text-align:center;flex:1;min-width:0;"><input id="mov_date" type="date" value="'+esc(day)+'" max="'+today()+'" style="border:none;background:none;font-weight:700;font-size:15px;text-align:center;color:var(--ink);width:100%;"><div style="font-size:11.5px;color:var(--ink2);margin-top:1px;">'+(isToday?"Aujourd\'hui":frDateLong(day))+'</div></div>';
+  h+='<button class="icon-btn" data-act="movDayShift" data-arg="1" aria-label="Jour suivant" style="font-size:22px;line-height:1;'+(isToday?'opacity:.25;pointer-events:none;':'')+'">›</button>';
+  h+='</div>';
+  if(!isToday)h+='<button class="link-row top" data-act="movToday">← Revenir à aujourd\'hui</button>';
   if(!tmovs.length){
-    h+='<div class="empty"><p>Aucun mouvement aujourd\'hui.</p><button class="btn btn-primary" data-act="add">'+ic("plus")+'Ajouter un mouvement</button></div>';
+    h+='<div class="empty"><p>Aucun mouvement ce jour-là.</p>'+(isToday?('<button class="btn btn-primary" data-act="add">'+ic("plus")+'Ajouter un mouvement</button>'):'')+'</div>';
   }else{
     h+='<div class="mov-list">';
     for(var i=0;i<tmovs.length;i++){var m=tmovs[i];
@@ -810,7 +819,9 @@ function commitMov(m){
   if(i>=0)state.movements[i]=m;else state.movements.push(m);
   // Paiement de dette : marque la dette réglée (elle sort du « ce que je dois »)
   if(m.dette_id){var dt=findDette(m.dette_id);if(dt){dt.montant=round2((dt.montant||0)-m.montant);if(dt.montant<=0.004){dt.montant=0;dt.settled_day=m.date;}dt._dirty=true;}}
-  saveCache();state.editId=null;state.form=null;state.view=m.dette_id?"registre":"home";render();sync().then(render);
+  saveCache();state.editId=null;state.form=null;
+  if(m.dette_id)state.view="registre";else if(i>=0){state.view="movements";state.movDay=m.date;}else state.view="home";
+  render();sync().then(render);
   showToast(m.dette_id?"Dette payée":(i>=0?"Mouvement modifié":"Mouvement enregistré"));
 }
 function submitMov(){
@@ -1078,7 +1089,9 @@ document.addEventListener("click",function(ev){
     if(!ok[act]&&!navOk)return;
   }
 
-  if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();render();return;}
+  if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();if(arg==="movements")state.movDay=today();render();return;}
+  if(act==="movDayShift"){var d0=state.movDay||today();var dd=new Date(d0+"T12:00:00");dd.setDate(dd.getDate()+(+arg));var nd=dateKey(dd);if(nd>today())nd=today();state.movDay=nd;render();return;}
+  if(act==="movToday"){state.movDay=today();render();return;}
   if(act==="settings"){state.view="settings";render();return;}
   if(act==="back"){state.editId=null;state.form=null;state.view="home";render();return;}
   if(act==="add"){openAdd();return;}
