@@ -608,7 +608,7 @@ function chartHTML(rows){
   return s;
 }
 function fmtCell(c){return c?formatNum(toE(c)):"";}
-function ledgerTableHTML(L,ro){
+function ledgerTableHTML(L,ro,moisMap){
   var st='<style>'
     +'table.ledger{width:100%;border-collapse:collapse;font-size:14px;min-width:540px;}'
     +'table.ledger th{font-size:11.5px;color:var(--ink2);font-weight:600;text-align:left;padding:8px 8px;border-bottom:0.5px solid var(--line);}'
@@ -619,6 +619,7 @@ function ledgerTableHTML(L,ro){
     +'table.ledger td.rec{color:var(--greenInk);}table.ledger td.deb{color:var(--red);}'
     +'table.ledger td.solde{font-size:15px;}'
     +'table.ledger .led-sub{font-size:11px;color:var(--ink2);margin-top:1px;font-weight:400;}'
+    +'table.ledger tr.moisrecap td{background:rgba(201,169,97,.15);font-weight:700;font-size:12px;color:var(--ink);padding:9px 10px;border-top:2px solid var(--accent);line-height:1.5;}'
     +'</style>';
   var h=st+'<table class="ledger"><colgroup><col style="width:25%"><col style="width:15%"><col style="width:13%"><col style="width:16%"><col style="width:12%"><col style="width:19%"></colgroup>';
   h+='<thead><tr><th>Libellé</th><th class="r">Recettes</th><th class="r">Débit</th><th class="r">Solde</th><th class="r">Marge %</th><th class="r">Ce que je dois</th></tr></thead><tbody>';
@@ -627,13 +628,15 @@ function ledgerTableHTML(L,ro){
     L.openLines.forEach(function(li){h+='<tr><td>'+esc(li.label)+(li.sub?'<div class="led-sub">'+esc(li.sub)+'</div>':'')+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td><td></td><td></td></tr>';});
   }
   h+='<tr class="tot"><td>Total</td><td></td><td></td><td class="r solde">'+formatNum(toE(L.openC))+'</td><td></td><td></td></tr>';
-  L.days.forEach(function(d){
+  L.days.forEach(function(d,idx){
     h+='<tr class="grp"><td colspan="6">'+frDateLong(d.date)+'</td></tr>';
     d.lines.forEach(function(li){h+='<tr><td>'+esc(li.label)+(li.sub?'<div class="led-sub">'+esc(li.sub)+'</div>':'')+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td><td></td><td></td></tr>';});
     var margeTxt=d.marge!=null?pctTxt(d.marge):(ro?"—":"+ marge");
     var margeCell=ro?('<td class="r">'+(d.marge!=null?pctTxt(d.marge):"—")+'</td>')
                     :('<td class="r" data-act="editMarge" data-arg="'+d.date+'" style="cursor:pointer;color:'+(d.marge!=null?'var(--ink)':'var(--accent)')+';">'+margeTxt+'</td>');
     h+='<tr class="tot"><td>Total</td><td></td><td></td><td class="r solde">'+formatNum(toE(d.soldeC))+'</td>'+margeCell+'<td class="r">'+(d.dettesC?formatNum(toE(d.dettesC)):"—")+'</td></tr>';
+    var mo=d.date.slice(0,7);
+    if(moisMap&&moisMap[mo]&&((idx===L.days.length-1)||(L.days[idx+1].date.slice(0,7)!==mo))){var tm=moisMap[mo];h+='<tr class="moisrecap"><td colspan="6">Total '+nomMois(mo)+' — Ventes '+money(toE(tm.total))+'  ·  Espèces '+money(toE(tm.especes))+'  ·  CB '+money(toE(tm.ca))+'  ·  Revolut '+money(toE(tm.revolut))+'</td></tr>';}
   });
   h+='</tbody></table>';
   return h;
@@ -670,14 +673,14 @@ function viewRegistre(){
   var moisMap={};
   Object.keys(map).forEach(function(k){var mo=k.slice(0,7);var c=caJourC(map[k]);var t=moisMap[mo]||(moisMap[mo]={especes:0,ca:0,revolut:0,total:0});t.especes+=c.especes;t.ca+=c.ca;t.revolut+=c.revolut;t.total+=c.total;});
   var moisKeys=Object.keys(moisMap).sort().reverse();
-  if(moisKeys.length){
+  if(!ro && moisKeys.length){
     h+='<div class="card"><p class="section-title flush">Ventes par mois</p><p class="field-hint" style="margin-top:2px;">Total encaissé chaque mois, par moyen de paiement.</p>';
     moisKeys.forEach(function(mo){var t=moisMap[mo];
       h+='<div style="padding:9px 0;border-top:1px solid rgba(0,0,0,.07);"><div style="display:flex;justify-content:space-between;align-items:baseline;"><span style="font-weight:700;">'+nomMois(mo)+'</span><span class="num" style="font-weight:800;">'+money(toE(t.total))+'</span></div><div style="font-size:12.5px;color:var(--ink2);margin-top:3px;">Espèces '+money(toE(t.especes))+' · CB '+money(toE(t.ca))+' · Revolut '+money(toE(t.revolut))+'</div></div>';
     });
     h+='</div>';
   }
-  h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro)+'</div>';
+  h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro,moisMap)+'</div>';
   h+=dettesPanelHTML(debts,ro);
   h+='</div>';
   return h;
