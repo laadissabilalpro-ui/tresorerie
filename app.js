@@ -647,7 +647,7 @@ function ledgerTableHTML(L,ro,moisMap){
     var mo=d.date.slice(0,7);
     if(moisMap&&moisMap[mo]&&((idx===L.days.length-1)||(L.days[idx+1].date.slice(0,7)!==mo))){var tm=moisMap[mo];
       var seg=function(lbl,c){return '<span style="white-space:nowrap;">'+lbl+' '+formatCompact(toE(c))+' €</span>';};
-      h+='<tr class="moisrecap"><td colspan="6"><div style="white-space:nowrap;font-size:13px;"><span style="white-space:nowrap;">Total '+nomMois(mo)+'</span> : <span style="white-space:nowrap;font-weight:800;">'+formatCompact(toE(tm.total))+' €</span></div><div style="font-size:11.5px;font-weight:600;color:var(--ink2);margin-top:4px;line-height:1.8;">'+seg("Espèces",tm.especes)+' · '+seg("CB",tm.ca)+' · '+seg("Revolut",tm.revolut)+'</div></td></tr>';}
+      h+='<tr class="moisrecap"><td colspan="6"><div style="white-space:nowrap;font-size:12px;"><span style="white-space:nowrap;">Total '+nomMois(mo)+'</span> : <span style="white-space:nowrap;font-weight:800;">'+formatCompact(toE(tm.total))+' €</span></div><div style="font-size:10.5px;font-weight:600;color:var(--ink2);margin-top:3px;line-height:1.7;letter-spacing:-.2px;">'+seg("Espèces",tm.especes)+' · '+seg("CB",tm.ca)+' · '+seg("Revolut",tm.revolut)+'</div></td></tr>';}
   });
   h+='</tbody></table>';
   return h;
@@ -683,6 +683,8 @@ function viewRegistre(){
   if(!ro && rows.length)h+='<div class="card"><p class="section-title flush">CA par jour</p>'+chartHTML(rows)+'</div>';
   var moisMap={};
   Object.keys(map).forEach(function(k){var mo=k.slice(0,7);var c=caJourC(map[k]);var t=moisMap[mo]||(moisMap[mo]={especes:0,ca:0,revolut:0,total:0});t.especes+=c.especes;t.ca+=c.ca;t.revolut+=c.revolut;t.total+=c.total;});
+  var moInit=(s.dateInit||today()).slice(0,7),si=s.soldesInit||{especes:0,ca:0,revolut:0},siE=toC(si.especes),siC=toC(si.ca),siR=toC(si.revolut);
+  if(siE||siC||siR){var ti=moisMap[moInit]||(moisMap[moInit]={especes:0,ca:0,revolut:0,total:0});ti.especes+=siE;ti.ca+=siC;ti.revolut+=siR;ti.total+=siE+siC+siR;}
   var moisKeys=Object.keys(moisMap).sort().reverse();
   if(!ro && moisKeys.length){
     h+='<div class="card"><p class="section-title flush">Ventes par mois</p><p class="field-hint" style="margin-top:2px;">Total encaissé chaque mois, par moyen de paiement.</p>';
