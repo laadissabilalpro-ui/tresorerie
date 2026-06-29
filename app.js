@@ -59,6 +59,7 @@ function frDateShort(k){var p=k.split("-");return p[2]+"/"+p[1];}
 var MON=["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
 var DOW=["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"];
 function frDateLong(k){var p=k.split("-");var d=new Date(+p[0],+p[1]-1,+p[2]);var s=DOW[d.getDay()]+" "+(+p[2])+" "+MON[+p[1]-1]+" "+p[0];return s.charAt(0).toUpperCase()+s.slice(1);}
+function nomMois(mo){var p=mo.split("-");var n=MON[(+p[1])-1]||"";return n.charAt(0).toUpperCase()+n.slice(1)+" "+p[0];}
 function frHeure(ts){var d=new Date(ts);return pad(d.getHours())+":"+pad(d.getMinutes());}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
 function uuid(){ try{ if(crypto&&crypto.randomUUID)return crypto.randomUUID(); }catch(e){} return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,function(c){var r=Math.random()*16|0,v=c==="x"?r:(r&0x3|0x8);return v.toString(16);}); }
@@ -666,6 +667,16 @@ function viewRegistre(){
   var cag=persoCagnotte();
   h+='<button class="link-row" data-act="nav" data-arg="perso"><span>💰 Argent perso : '+money(toE(cag.soldeC))+' — voir le détail</span>'+ic("chevron")+'</button>';
   if(rows.length)h+='<div class="card"><p class="section-title flush">CA par jour</p>'+chartHTML(rows)+'</div>';
+  var moisMap={};
+  Object.keys(map).forEach(function(k){var mo=k.slice(0,7);var c=caJourC(map[k]);var t=moisMap[mo]||(moisMap[mo]={especes:0,ca:0,revolut:0,total:0});t.especes+=c.especes;t.ca+=c.ca;t.revolut+=c.revolut;t.total+=c.total;});
+  var moisKeys=Object.keys(moisMap).sort().reverse();
+  if(moisKeys.length){
+    h+='<div class="card"><p class="section-title flush">Ventes par mois</p><p class="field-hint" style="margin-top:2px;">Total encaissé chaque mois, par moyen de paiement.</p>';
+    moisKeys.forEach(function(mo){var t=moisMap[mo];
+      h+='<div style="padding:9px 0;border-top:1px solid rgba(0,0,0,.07);"><div style="display:flex;justify-content:space-between;align-items:baseline;"><span style="font-weight:700;">'+nomMois(mo)+'</span><span class="num" style="font-weight:800;">'+money(toE(t.total))+'</span></div><div style="font-size:12.5px;color:var(--ink2);margin-top:3px;">Espèces '+money(toE(t.especes))+' · CB '+money(toE(t.ca))+' · Revolut '+money(toE(t.revolut))+'</div></div>';
+    });
+    h+='</div>';
+  }
   h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro)+'</div>';
   h+=dettesPanelHTML(debts,ro);
   h+='</div>';
@@ -1136,5 +1147,13 @@ if("serviceWorker" in navigator){
     if(__initialCtrl){__refreshing=true;location.reload();}
   });
 }
+
+/* Rafraîchissement automatique des données (surtout pour la consultation du mentor qui ouvre via le lien) :
+   au retour sur l'onglet (visibilitychange/focus), au retour du réseau, et toutes les 60 s tant que l'onglet est visible. */
+function autoRefresh(){ if(!document.hidden && state.code && state.ready){ try{ sync().then(function(){render();}); }catch(e){} } }
+document.addEventListener("visibilitychange",autoRefresh);
+window.addEventListener("focus",autoRefresh);
+window.addEventListener("online",autoRefresh);
+setInterval(autoRefresh,60000);
 
 })();
