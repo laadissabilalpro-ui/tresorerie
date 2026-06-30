@@ -897,10 +897,37 @@ function ensureTesseract(){
 }
 function openTicketScan(){
   captureForm();
-  var inp=document.createElement("input");
-  inp.type="file";inp.accept="image/*";inp.setAttribute("capture","environment");
-  inp.onchange=function(){var file=inp.files&&inp.files[0];if(file)runOCR(file);};
+  // Input persistant attaché au DOM : sur iOS la caméra purge la page de la mémoire ;
+  // un input détaché était garbage-collecté → le "change" ne se déclenchait pas (scan à refaire 2-3×).
+  var inp=document.getElementById("__ticketInput");
+  if(!inp){
+    inp=document.createElement("input");
+    inp.type="file";inp.accept="image/*";inp.setAttribute("capture","environment");
+    inp.id="__ticketInput";
+    inp.style.cssText="position:fixed;left:-10000px;top:0;width:1px;height:1px;opacity:0;";
+    inp.addEventListener("change",function(){var file=inp.files&&inp.files[0];inp.value="";if(file)runOCR(file);});
+    document.body.appendChild(inp);
+  }
+  inp.value="";
   inp.click();
+}
+function downscaleImage(file,maxW){
+  return new Promise(function(resolve){
+    try{
+      var url=URL.createObjectURL(file),img=new Image();
+      img.onload=function(){
+        var w=img.naturalWidth,h=img.naturalHeight;
+        if(!w||w<=maxW){URL.revokeObjectURL(url);resolve(file);return;}
+        var nw=maxW,nh=Math.round(h*(maxW/w));
+        var c=document.createElement("canvas");c.width=nw;c.height=nh;
+        c.getContext("2d").drawImage(img,0,0,nw,nh);
+        URL.revokeObjectURL(url);
+        if(c.toBlob)c.toBlob(function(b){resolve(b||file);},"image/jpeg",0.85);else resolve(file);
+      };
+      img.onerror=function(){URL.revokeObjectURL(url);resolve(file);};
+      img.src=url;
+    }catch(e){resolve(file);}
+  });
 }
 function ocrOverlay(on){
   var ex=document.getElementById("ocrOverlay");
@@ -950,8 +977,11 @@ function runVisionOCR(file){
   });
 }
 function runOCR(file){
-  if(visionKey()){runVisionOCR(file);return;}
-  runTesseractOCR(file);
+  ocrOverlay(true);
+  var mx=visionKey()?1600:2000;
+  downscaleImage(file,mx).then(function(img){
+    if(visionKey())runVisionOCR(img);else runTesseractOCR(img);
+  });
 }
 function doTestVisionKey(){
   var inp=document.getElementById("set_visionkey");var k=(inp&&inp.value.trim())||visionKey();
