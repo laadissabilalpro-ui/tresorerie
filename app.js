@@ -328,7 +328,7 @@ var state={
   code:lget("treso:code",""),
   readOnly:false,
   settings:null, movements:[], debts:[], jours:{}, joursDirty:{},
-  view:"home", form:null, resumeDay:null, editId:null, movDay:null,
+  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null,
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 var RESERVE_MARK="__RESERVE_PERSO__";
@@ -397,6 +397,7 @@ function render(){
   else if(state.view==="resume")html+=viewResume();
   else if(state.view==="registre")html+=viewRegistre();
   else if(state.view==="perso")html+=viewPerso();
+  else if(state.view==="stock")html+=viewStock();
   else if(state.view==="settings")html+=viewSettings();
   else html+=viewHome();
   html+="</main>";
@@ -410,7 +411,7 @@ function render(){
 }
 
 function header(){
-  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",settings:"Réglages"};
+  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",stock:"Stock",settings:"Réglages"};
   var showBack=(!state.readOnly)&&(state.view==="add"||state.view==="settings");
   var left=showBack?'<button class="icon-btn" data-act="back" aria-label="Retour">'+ic("home")+'</button>':'<div class="header-brand"><span class="brand-dot"></span></div>';
   var right;
@@ -447,6 +448,37 @@ function viewPerso(){
     h+='</div>';
   }
   h+='<button class="link-row" data-act="nav" data-arg="'+(ro?"registre":"home")+'">'+ic("chevron")+' Retour</button>';
+  h+='</div>';
+  return h;
+}
+var STOCK_URL="https://dorblanc-backend-production.up.railway.app/api/stock/par-categorie";
+function fmtStockDate(iso){try{var d=new Date(iso);if(isNaN(d.getTime()))return String(iso);return d.toLocaleString("fr-FR",{timeZone:"Indian/Reunion",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}).replace(", "," à ");}catch(e){return String(iso);}}
+function fetchStock(){
+  state.stock={status:"loading"};render();
+  fetch(STOCK_URL,{cache:"no-store"})
+    .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})
+    .then(function(j){state.stock={status:"ok",data:j};render();})
+    .catch(function(e){state.stock={status:"error"};render();});
+}
+function viewStock(){
+  var s=state.stock||{};
+  var h='<div class="view">';
+  h+='<div class="card">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><p class="section-title flush">Stock</p><button class="btn btn-ghost" style="padding:6px 12px;font-size:13px;" data-act="stockRefresh">↻ Rafraîchir</button></div>';
+  if(s.status==="loading"){
+    h+='<p class="muted" style="text-align:center;padding:18px 0;">Chargement du stock…</p>';
+  } else if(s.status==="error"){
+    h+='<div class="note-box" style="border-left:3px solid #d9534f;">Stock indisponible pour le moment. Touche « Rafraîchir » pour réessayer.</div>';
+  } else if(s.status==="ok"&&s.data){
+    var d=s.data;
+    var cell=function(lbl,n){var v=(n==null||isNaN(+n))?"—":String(n);return '<div style="flex:1;text-align:center;padding:16px 6px;background:var(--bg);border-radius:12px;"><div class="num" style="font-size:30px;font-weight:800;color:var(--ink);line-height:1;">'+v+'</div><div style="font-size:12.5px;color:var(--ink2);margin-top:5px;">'+lbl+'</div></div>';};
+    h+='<div style="display:flex;gap:8px;">'+cell("Parfums",d.parfums)+cell("Sprays",d.sprays)+cell("Gold",d.gold)+'</div>';
+    if(d.genere_le)h+='<p class="field-hint" style="margin-top:12px;text-align:center;">Dernière mise à jour : '+esc(fmtStockDate(d.genere_le))+'</p>';
+  } else {
+    h+='<p class="muted" style="text-align:center;padding:18px 0;">Chargement…</p>';
+  }
+  h+='</div>';
+  h+='<button class="link-row" data-act="nav" data-arg="home">'+ic("chevron")+' Retour à l\'accueil</button>';
   h+='</div>';
   return h;
 }
@@ -488,6 +520,7 @@ function viewHome(){
   h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p><p class="total-hint">Espèces dispo + Crédit Agricole + Revolut</p></div>';
   var cag=persoCagnotte();
   h+='<button class="link-row" data-act="nav" data-arg="perso"><span>💰 Mon argent perso : '+money(toE(cag.soldeC))+'</span>'+ic("chevron")+'</button>';
+  h+='<button class="link-row" data-act="nav" data-arg="stock"><span>📦 Stock (parfums · sprays · gold)</span>'+ic("chevron")+'</button>';
   h+='<button class="link-row" data-act="nav" data-arg="registre">Voir le registre complet '+ic("chevron")+'</button>';
   h+='</div>';
   return h;
@@ -1121,7 +1154,8 @@ document.addEventListener("click",function(ev){
     if(!ok[act]&&!navOk)return;
   }
 
-  if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();if(arg==="movements")state.movDay=today();render();return;}
+  if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();if(arg==="movements")state.movDay=today();if(arg==="stock"){fetchStock();return;}render();return;}
+  if(act==="stockRefresh"){fetchStock();return;}
   if(act==="movDayShift"){var d0=state.movDay||today();var dd=new Date(d0+"T12:00:00");dd.setDate(dd.getDate()+(+arg));var nd=dateKey(dd);if(nd>today())nd=today();state.movDay=nd;render();return;}
   if(act==="movToday"){state.movDay=today();render();return;}
   if(act==="settings"){state.view="settings";render();return;}
