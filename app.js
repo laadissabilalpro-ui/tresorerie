@@ -1,5 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
-   Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=. */
+   Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
+   build: stock-2026-07-05 */
 (function(){
 "use strict";
 
