@@ -686,21 +686,32 @@ function ledgerTableHTML(L,ro,moisMap){
   h+='</tbody></table>';
   return h;
 }
+function dettePaidC(label){var pref=label?("Paiement dette : "+label):"Paiement dette",s=0;for(var i=0;i<state.movements.length;i++){var m=state.movements[i];if(!m._deleted&&m.note===pref)s+=toC(m.montant);}return s;}
+function detteBarColor(p){return p>=100?"#2e9e5b":(p>=70?"#5cb85c":(p>=30?"#e0a13a":"#d9534f"));}
 function dettesPanelHTML(debts,ro){
   var open=debts.filter(function(d){return !d.settled_day;});
   var total=0;open.forEach(function(d){total+=toC(d.montant);});
   var h='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><p class="section-title flush">Ce que je dois</p><span class="num" style="font-weight:800;">'+money(toE(total))+'</span></div>';
-  if(!open.length){h+='<p class="muted">Aucune dette en cours.</p>';}
+  var list=debts.slice().sort(function(a,b){var as=a.settled_day?1:0,bs=b.settled_day?1:0;if(as!==bs)return as-bs;return a.day<b.day?-1:1;});
+  if(!list.length){h+='<p class="muted">Aucune dette.</p>';}
   else{
-    h+='<div class="mov-list">';
-    open.forEach(function(d){
-      h+='<div class="mov-row'+(ro?" ro":"")+'"><div class="mov-main"><div class="mov-type">'+esc(d.label||"Dette")+'</div><div class="mov-sub">depuis le '+frDate(d.day)+'</div></div><div class="mov-right"><span class="mov-amt num out">'+formatNum(d.montant)+' €</span>'+
-         (ro?'':'<button class="btn btn-secondary" style="padding:7px 12px;font-size:13px;" data-act="payDette" data-arg="'+d.id+'" data-stop="1">Payer</button><button class="icon-btn small" data-act="delDette" data-arg="'+d.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button>')+
-         '</div></div>';
+    list.forEach(function(d){
+      var resteC=toC(d.montant),paidC=dettePaidC(d.label),initC=resteC+paidC;if(initC<=0)initC=resteC>0?resteC:1;
+      var regle=!!d.settled_day||resteC<=0;
+      var pct=regle?100:Math.max(0,Math.min(100,Math.round(paidC/initC*100)));
+      var col=detteBarColor(pct);
+      h+='<div style="padding:11px 0;border-top:1px solid rgba(0,0,0,.06);">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;"><span style="font-weight:700;">'+esc(d.label||"Dette")+(regle?' <span style="font-size:11px;font-weight:700;color:#2e9e5b;background:rgba(46,158,91,.13);padding:2px 7px;border-radius:8px;">Réglé</span>':'')+'</span><span class="num" style="font-weight:800;white-space:nowrap;color:'+col+';">'+pct+' %</span></div>';
+      h+='<div style="height:9px;background:rgba(0,0,0,.08);border-radius:6px;overflow:hidden;margin:7px 0 5px;"><div style="height:100%;width:'+pct+'%;background:'+col+';"></div></div>';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2);"><span>'+formatNum(toE(paidC))+' € remboursés sur '+formatNum(toE(initC))+' €'+(regle?'':' · reste '+formatNum(toE(resteC))+' €')+'</span>';
+      if(!ro){
+        if(regle)h+='<button class="btn btn-ghost" style="padding:5px 10px;font-size:12px;white-space:nowrap;" data-act="delDette" data-arg="'+d.id+'" data-stop="1">Archiver</button>';
+        else h+='<span style="display:flex;gap:6px;flex-shrink:0;"><button class="btn btn-secondary" style="padding:6px 11px;font-size:12.5px;" data-act="payDette" data-arg="'+d.id+'" data-stop="1">Payer</button><button class="icon-btn small" data-act="delDette" data-arg="'+d.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button></span>';
+      }
+      h+='</div></div>';
     });
-    h+='</div>';
   }
-  if(!ro)h+='<button class="btn btn-secondary full" style="margin-top:10px;" data-act="addDette">'+ic("plus")+'Ajouter une dette</button>';
+  if(!ro)h+='<button class="btn btn-secondary full" style="margin-top:12px;" data-act="addDette">'+ic("plus")+'Ajouter une dette</button>';
   h+='</div>';
   return h;
 }
@@ -729,7 +740,7 @@ function viewRegistre(){
     h+='</div>';
   }
   h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro,moisMap)+'</div>';
-  h+=dettesPanelHTML(debts,ro);
+  if(!ro)h+=dettesPanelHTML(debts,ro);
   h+='</div>';
   return h;
 }
@@ -1137,9 +1148,10 @@ function ocrInfoHTML(){
   return h;
 }
 function delDette(id){
-  state.confirm={message:"Supprimer cette dette ?",danger:true,confirmLabel:"Supprimer",onYes:function(){
+  var d0=findDette(id);var isReg=!!(d0&&(d0.settled_day||toC(d0.montant)<=0));
+  state.confirm={message:isReg?"Archiver cette dette réglée ?":"Supprimer cette dette ?",danger:!isReg,confirmLabel:isReg?"Archiver":"Supprimer",onYes:function(){
     state.confirm=null;var d=findDette(id);if(d){d._deleted=true;d._dirty=false;}
-    saveCache();render();sync().then(render);showToast("Dette supprimée");
+    saveCache();render();sync().then(render);showToast(isReg?"Dette archivée":"Dette supprimée");
   }};
   render();
 }
