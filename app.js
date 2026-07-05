@@ -483,6 +483,10 @@ function viewStock(){
   h+='</div>';
   return h;
 }
+function decompoComptesHTML(caC,revolutC,especesC){
+  var cell=function(icon,lbl,c,brd){return '<div style="flex:1;text-align:center;'+(brd?"border-left:1px solid rgba(255,255,255,.14);border-right:1px solid rgba(255,255,255,.14);":"")+'"><div style="font-size:11.5px;opacity:.85;white-space:nowrap;">'+icon+' '+lbl+'</div><div class="num" style="font-size:15px;font-weight:800;margin-top:2px;'+(c<0?"color:#FF9B9B;":"")+'">'+formatCompact(toE(c))+' €</div></div>';};
+  return '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;padding-top:11px;border-top:1px solid rgba(255,255,255,.16);">'+cell("💳","CB",caC,false)+cell("📲","Revolut",revolutC,true)+cell("💵","Espèces",especesC,false)+'</div>';
+}
 function viewHome(){
   var s=state.settings,movs=activeMovs();
   var bal=balancesC(s,movs);
@@ -511,22 +515,13 @@ function viewHome(){
     h+='<button class="quick-btn" data-act="quick" data-arg="revolut"><span class="q-plus">+</span> Vente Revolut</button>';
     h+='</div>';
   }
-  h+='<p class="section-title">Soldes par compte</p>';
-  h+='<div class="card acct"><div class="acct-head">Espèces</div>';
-  h+='<div class="acct-line"><span>Physique</span><span class="num'+negC(bal.especes)+'">'+money(toE(bal.especes))+'</span></div>';
-  h+='<div class="acct-line sub"><span>Fond de caisse</span><span class="num">'+money(s.fond)+'</span></div>';
-  h+='<div class="acct-line strong"><span>Disponible</span><span class="num'+negC(dispoEsp)+'">'+money(toE(dispoEsp))+'</span></div></div>';
-  h+='<div class="card acct"><div class="acct-line strong only"><span>Crédit Agricole</span><span class="num'+negC(bal.ca)+'">'+money(toE(bal.ca))+'</span></div></div>';
-  h+='<div class="card acct"><div class="acct-line strong only"><span>Revolut</span><span class="num'+negC(bal.revolut)+'">'+money(toE(bal.revolut))+'</span></div></div>';
-  h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p>';
-  h+='<div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;padding-top:11px;border-top:1px solid rgba(255,255,255,.16);">';
-  h+='<div style="flex:1;text-align:center;"><div style="font-size:11.5px;opacity:.85;white-space:nowrap;">💳 CB</div><div class="num" style="font-size:15px;font-weight:800;margin-top:2px;'+(bal.ca<0?"color:#FF9B9B;":"")+'">'+formatCompact(toE(bal.ca))+' €</div></div>';
-  h+='<div style="flex:1;text-align:center;border-left:1px solid rgba(255,255,255,.14);border-right:1px solid rgba(255,255,255,.14);"><div style="font-size:11.5px;opacity:.85;white-space:nowrap;">📲 Revolut</div><div class="num" style="font-size:15px;font-weight:800;margin-top:2px;'+(bal.revolut<0?"color:#FF9B9B;":"")+'">'+formatCompact(toE(bal.revolut))+' €</div></div>';
-  h+='<div style="flex:1;text-align:center;"><div style="font-size:11.5px;opacity:.85;white-space:nowrap;">💵 Espèces</div><div class="num" style="font-size:15px;font-weight:800;margin-top:2px;'+(dispoEsp<0?"color:#FF9B9B;":"")+'">'+formatCompact(toE(dispoEsp))+' €</div></div>';
-  h+='</div></div>';
+  h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p>'+decompoComptesHTML(bal.ca,bal.revolut,dispoEsp)+'</div>';
+  h+=dettesPanelHTML(activeDebts(),false);
   var cag=persoCagnotte();
-  h+='<button class="link-row" data-act="nav" data-arg="perso"><span>💰 Mon argent perso : '+money(toE(cag.soldeC))+'</span>'+ic("chevron")+'</button>';
-  h+='<button class="link-row" data-act="nav" data-arg="stock"><span>📦 Stock (parfums · sprays · gold)</span>'+ic("chevron")+'</button>';
+  h+='<div style="display:flex;gap:10px;margin:2px 0;">';
+  h+='<button class="card" style="flex:1;border:none;text-align:center;padding:16px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;" data-act="nav" data-arg="perso"><span style="font-size:26px;line-height:1;">💰</span><span style="font-size:13px;font-weight:700;color:var(--ink);">Mon argent perso</span><span class="num" style="font-size:15px;font-weight:800;color:var(--ink);">'+money(toE(cag.soldeC))+'</span></button>';
+  h+='<button class="card" style="flex:1;border:none;text-align:center;padding:16px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;" data-act="nav" data-arg="stock"><span style="font-size:26px;line-height:1;">📦</span><span style="font-size:13px;font-weight:700;color:var(--ink);">Stock</span><span style="font-size:11.5px;color:var(--ink2);">parfums · sprays · gold</span></button>';
+  h+='</div>';
   h+='<button class="link-row" data-act="nav" data-arg="registre">Voir le registre complet '+ic("chevron")+'</button>';
   h+='</div>';
   return h;
@@ -694,6 +689,12 @@ function dettesPanelHTML(debts,ro){
   var open=debts.filter(function(d){return !d.settled_day;});
   var total=0;open.forEach(function(d){total+=toC(d.montant);});
   var h='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><p class="section-title flush">Ce que je dois</p>'+(ro?'':'<span class="num" style="font-weight:800;">'+money(toE(total))+'</span>')+'</div>';
+  if(ro){
+    if(!open.length){h+='<p class="muted">Aucune dette en cours.</p>';}
+    else{open.forEach(function(d){h+='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:10px 0;border-top:1px solid rgba(0,0,0,.06);"><span style="font-weight:700;">'+esc(d.label||"Dette")+'</span><span class="num out" style="font-weight:800;white-space:nowrap;">'+formatNum(d.montant)+' €</span></div>';});}
+    h+='</div>';
+    return h;
+  }
   var list=debts.slice().sort(function(a,b){var as=a.settled_day?1:0,bs=b.settled_day?1:0;if(as!==bs)return as-bs;return a.day<b.day?-1:1;});
   if(!list.length){h+='<p class="muted">Aucune dette.</p>';}
   else{
@@ -724,7 +725,8 @@ function viewRegistre(){
   var map={};movs.forEach(function(m){(map[m.date]=map[m.date]||[]).push(m);});
   var rows=Object.keys(map).sort().map(function(k){return {date:k,caTotal:caJourC(map[k]).total};});
   var h='<div class="view">';
-  h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+(totalC<0?" neg":"")+'">'+money(toE(totalC))+'</p></div>';
+  var rbal=balancesC(s,movs),rdispoEsp=rbal.especes-toC(s.fond);
+  h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+(totalC<0?" neg":"")+'">'+money(toE(totalC))+'</p>'+decompoComptesHTML(rbal.ca,rbal.revolut,rdispoEsp)+'</div>';
   var cag=persoCagnotte();
   h+='<button class="link-row" data-act="nav" data-arg="perso"><span>💰 Argent perso : '+money(toE(cag.soldeC))+' — voir le détail</span>'+ic("chevron")+'</button>';
   h+='<button class="link-row" data-act="nav" data-arg="stock"><span>📦 Voir le stock (parfums · sprays · gold)</span>'+ic("chevron")+'</button>';
