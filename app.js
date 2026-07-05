@@ -653,9 +653,9 @@ function chartHTML(rows){
 function fmtCell(c){return c?formatNum(toE(c)):"";}
 function ledgerTableHTML(L,ro,moisMap){
   var st='<style>'
-    +'table.ledger{width:100%;border-collapse:collapse;font-size:14px;min-width:540px;}'
+    +'table.ledger{width:100%;border-collapse:collapse;font-size:14px;min-width:620px;}'
     +'table.ledger th{font-size:11.5px;color:var(--ink2);font-weight:600;text-align:left;padding:8px 8px;border-bottom:0.5px solid var(--line);}'
-    +'table.ledger th.r,table.ledger td.r{text-align:right;}'
+    +'table.ledger th.r,table.ledger td.r{text-align:right;white-space:nowrap;}'
     +'table.ledger td{padding:7px 8px;}'
     +'table.ledger tr.grp td{background:var(--bg);font-size:12px;font-weight:700;color:var(--ink);padding:6px 8px;}'
     +'table.ledger tr.tot td{border-top:0.5px solid var(--line);font-weight:700;}'
@@ -664,7 +664,7 @@ function ledgerTableHTML(L,ro,moisMap){
     +'table.ledger .led-sub{font-size:11px;color:var(--ink2);margin-top:1px;font-weight:400;}'
     +'table.ledger tr.moisrecap td{background:rgba(201,169,97,.15);font-weight:700;font-size:12px;color:var(--ink);padding:9px 10px;border-top:2px solid var(--accent);line-height:1.5;}'
     +'</style>';
-  var h=st+'<table class="ledger"><colgroup><col style="width:25%"><col style="width:15%"><col style="width:13%"><col style="width:16%"><col style="width:12%"><col style="width:19%"></colgroup>';
+  var h=st+'<table class="ledger"><colgroup><col style="width:22%"><col style="width:15%"><col style="width:15%"><col style="width:17%"><col style="width:11%"><col style="width:20%"></colgroup>';
   h+='<thead><tr><th>Libellé</th><th class="r">Recettes</th><th class="r">Débit</th><th class="r">Solde</th><th class="r">Marge %</th><th class="r">Ce que je dois</th></tr></thead><tbody>';
   h+='<tr class="grp"><td colspan="6">Solde avant</td></tr>';
   if(L.openLines.length){
