@@ -388,7 +388,7 @@ function render(){
     if(!navigator.onLine){app.innerHTML=state.readOnly?msgScreen("Hors-ligne","Connecte-toi à internet pour afficher les données partagées."):viewOnbSettings();return;}
     app.innerHTML=state.readOnly?msgScreen("Aucune donnée","Aucune donnée n'est encore partagée pour ce code de consultation."):viewOnbSettings();return;
   }
-  if(state.readOnly && state.view!=="perso") state.view="registre"; // registre, + page perso accessible
+  if(state.readOnly && state.view!=="perso" && state.view!=="stock") state.view="registre"; // registre + pages perso/stock accessibles
   else if(state.view==="add"||state.view==="settings"){} // ok
   var html=header();
   html+='<main class="content">';
@@ -479,7 +479,7 @@ function viewStock(){
     h+='<p class="muted" style="text-align:center;padding:18px 0;">Chargement…</p>';
   }
   h+='</div>';
-  h+='<button class="link-row" data-act="nav" data-arg="home">'+ic("chevron")+' Retour à l\'accueil</button>';
+  h+='<button class="link-row" data-act="nav" data-arg="'+(state.readOnly?"registre":"home")+'">'+ic("chevron")+' Retour</button>';
   h+='</div>';
   return h;
 }
@@ -714,6 +714,7 @@ function viewRegistre(){
   h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+(totalC<0?" neg":"")+'">'+money(toE(totalC))+'</p></div>';
   var cag=persoCagnotte();
   h+='<button class="link-row" data-act="nav" data-arg="perso"><span>💰 Argent perso : '+money(toE(cag.soldeC))+' — voir le détail</span>'+ic("chevron")+'</button>';
+  h+='<button class="link-row" data-act="nav" data-arg="stock"><span>📦 Voir le stock (parfums · sprays · gold)</span>'+ic("chevron")+'</button>';
   if(!ro && rows.length)h+='<div class="card"><p class="section-title flush">CA par jour</p>'+chartHTML(rows)+'</div>';
   var moisMap={};
   Object.keys(map).forEach(function(k){var mo=k.slice(0,7);var c=caJourC(map[k]);var t=moisMap[mo]||(moisMap[mo]={especes:0,ca:0,revolut:0,total:0});t.especes+=c.especes;t.ca+=c.ca;t.revolut+=c.revolut;t.total+=c.total;});
@@ -1150,8 +1151,8 @@ document.addEventListener("click",function(ev){
   if(el.getAttribute("data-stop"))ev.stopPropagation();
 
   if(state.readOnly){
-    var ok={retrySync:1,onbCode:1};
-    var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"));
+    var ok={retrySync:1,onbCode:1,stockRefresh:1};
+    var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"||arg==="stock"));
     if(!ok[act]&&!navOk)return;
   }
 
