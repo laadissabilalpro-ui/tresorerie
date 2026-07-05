@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: stock-2026-07-05 */
+   build: transferts-perso-2026-07-05b */
 (function(){
 "use strict";
 
@@ -20,8 +20,18 @@ var TYPES = {
   REMISE:{id:"REMISE",label:"Remise en banque",sens:"transfert"},
   ACHAT:{id:"ACHAT",label:"Achat stock",sens:"sortie"},
   CHARGE:{id:"CHARGE",label:"Charge",sens:"sortie"},
-  RETRAIT:{id:"RETRAIT",label:"Retrait perso",sens:"sortie"}
+  RETRAIT:{id:"RETRAIT",label:"Retrait perso",sens:"sortie"},
+  TRANSFERT:{id:"TRANSFERT",label:"Transfert",sens:"transfert"}
 };
+/* Transfert entre comptes — destination + nature encodées dans la note (pas de colonne dédiée en base).
+   Format note : "T|<nature>|<src>|<dst>|<libellé>"  · nature : S=mouvement simple (business↔business, neutre) · R=rééquilibrage perso→pro (enveloppe perso[src] → compte business[dst]) */
+function parseTransfert(m){
+  var raw=String(m&&m.note||"");
+  if(raw.charAt(0)!=="T"||raw.charAt(1)!=="|")return {nature:"S",src:m&&m.compte||"especes",dst:"ca",label:""};
+  var p=raw.split("|");
+  return {nature:(p[1]==="R"?"R":"S"),src:p[2]||"especes",dst:p[3]||"ca",label:p.slice(4).join("|")||""};
+}
+function isTransfert(m){return m&&m.type==="TRANSFERT";}
 
 /* ===================== HELPERS ARGENT (centimes) ===================== */
 function toC(n){return Math.round((Number(n)||0)*100);}
@@ -72,6 +82,7 @@ function effectsC(movs){
   for(var i=0;i<movs.length;i++){var m=movs[i],a=toC(m.montant);
     if(m.type==="VENTE")e[m.compte]+=a;
     else if(m.type==="REMISE"){e.especes-=a;e.ca+=a;}
+    else if(m.type==="TRANSFERT"){var tr=parseTransfert(m);if(tr.nature==="S"){if(e[tr.src]!=null)e[tr.src]-=a;if(e[tr.dst]!=null)e[tr.dst]+=a;}else{if(e[tr.dst]!=null)e[tr.dst]+=a;}}
     else e[m.compte]-=a;}
   return e;
 }
@@ -83,6 +94,7 @@ function deltasForAccount(dayMovs,acct){
   for(var i=0;i<dayMovs.length;i++){var m=dayMovs[i],a=toC(m.montant);
     if(m.type==="VENTE"&&m.compte===acct)arr.push(a);
     else if(m.type==="REMISE"){if(acct==="especes")arr.push(-a);else if(acct==="ca")arr.push(a);}
+    else if(m.type==="TRANSFERT"){var tr=parseTransfert(m);if(tr.nature==="S"){if(tr.src===acct)arr.push(-a);else if(tr.dst===acct)arr.push(a);}else if(tr.dst===acct)arr.push(a);}
     else if((m.type==="ACHAT"||m.type==="CHARGE"||m.type==="RETRAIT")&&m.compte===acct)arr.push(-a);
   }
   return arr;
@@ -180,6 +192,14 @@ function buildLedger(s, movs, debts, jours){
       else if(m.type==="REMISE"){
         lines.push({label:"Espèces",sub:"Remise vers la banque",recetteC:0,debitC:a});
         lines.push({label:"Crédit Agricole",sub:"Remise reçue",recetteC:a,debitC:0});
+      } else if(m.type==="TRANSFERT"){
+        var tr=parseTransfert(m),sn=(COMPTES[tr.src]||{}).nom||tr.src,dn=(COMPTES[tr.dst]||{}).nom||tr.dst;
+        if(tr.nature==="R"){
+          lines.push({label:dn,sub:"⚖️ Rééquilibrage — couvert avec argent perso"+(tr.label?" · "+tr.label:""),recetteC:a,debitC:0});
+        } else {
+          lines.push({label:sn,sub:"🔄 Transfert → "+dn+(tr.label?" · "+tr.label:""),recetteC:0,debitC:a});
+          lines.push({label:dn,sub:"🔄 Reçu de "+sn,recetteC:a,debitC:0});
+        }
       } else { var subL; if(m.note===RESERVE_MARK){subL="Retrait perso";} else if(m.note&&m.note.indexOf("Paiement dette")===0){subL=m.note;} else {subL=TYPES[m.type].label+(m.note?" — "+m.note:"");} lines.push({label:cn,sub:subL,recetteC:0,debitC:a}); }
     }
     var rec=0,deb=0;
@@ -338,13 +358,15 @@ function isRetraitPerso(m){return m.type==="RETRAIT"||m.note===RESERVE_MARK;}
 function activeMovs(){return state.movements.filter(function(m){return !m._deleted && !isPersoDep(m);});}
 function activeDebts(){return state.debts.filter(function(d){return !d._deleted;});}
 function persoCagnotte(){
-  var R=0,D=0,items=[];
-  for(var i=0;i<state.movements.length;i++){var m=state.movements[i];if(m._deleted)continue;
-    if(isPersoDep(m)){D+=toC(m.montant);items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"dep",label:(m.note||"").replace(/^Perso · /,"")||"Dépense",montantC:toC(m.montant)});}
-    else if(isRetraitPerso(m)){R+=toC(m.montant);items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"ret",label:"Retrait"+(m.compte&&COMPTES[m.compte]?" ("+COMPTES[m.compte].nom+")":""),montantC:toC(m.montant)});}
+  var R=0,D=0,items=[],byAcct={especes:0,ca:0,revolut:0};
+  for(var i=0;i<state.movements.length;i++){var m=state.movements[i];if(m._deleted)continue;var a=toC(m.montant);
+    if(isPersoDep(m)){D+=a;if(byAcct[m.compte]!=null)byAcct[m.compte]-=a;items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"dep",acct:m.compte,label:(m.note||"").replace(/^Perso · /,"")||"Dépense",montantC:a});}
+    else if(isRetraitPerso(m)){R+=a;if(byAcct[m.compte]!=null)byAcct[m.compte]+=a;items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"ret",acct:m.compte,label:"Retrait"+(m.compte&&COMPTES[m.compte]?" ("+COMPTES[m.compte].nom+")":""),montantC:a});}
+    else if(isTransfert(m)){var tr=parseTransfert(m);if(tr.nature==="R"){if(byAcct[tr.src]!=null)byAcct[tr.src]-=a;items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"requ",acct:tr.src,label:"Rééquilibrage → "+((COMPTES[tr.dst]||{}).nom||tr.dst)+(tr.label?" · "+tr.label:""),montantC:a});}}
   }
   items.sort(function(a,b){return a.date<b.date?1:a.date>b.date?-1:(b.ts-a.ts);});
-  return {retraitsC:R,depensesC:D,soldeC:R-D,items:items};
+  var soldeC=byAcct.especes+byAcct.ca+byAcct.revolut;
+  return {retraitsC:R,depensesC:D,soldeC:soldeC,byAcct:byAcct,items:items};
 }
 
 /* ===================== TOAST / COPIE ===================== */
@@ -429,8 +451,9 @@ function viewPerso(){
   var cag=persoCagnotte();
   var h='<div class="view">';
   h+='<div class="card total-card"><p class="total-label">Mon argent perso</p><p class="total-amount num'+(cag.soldeC<0?" neg":"")+'">'+money(toE(cag.soldeC))+'</p>';
+  h+=persoDecompoHTML(cag.byAcct);
   h+='<div style="border-top:1px solid rgba(255,255,255,.15);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;font-size:13px;opacity:.9;"><span>Retiré '+money(toE(cag.retraitsC))+'</span><span>Dépensé '+money(toE(cag.depensesC))+'</span></div>';
-  h+='<p class="total-hint">Ce que tu t\'es versé pour toi, moins tes dépenses perso. N\'affecte pas les comptes du business.</p></div>';
+  h+='<p class="total-hint">Ce que tu t\'es versé pour toi, réparti par compte, moins tes dépenses perso.</p></div>';
   if(!ro){
     h+='<div class="quick-row"><button class="quick-btn" data-act="retraitPerso"><span class="q-plus">+</span> Retrait perso</button><button class="quick-btn" data-act="depensePerso"><span class="q-plus">−</span> Dépense perso</button></div>';
   }
@@ -442,7 +465,7 @@ function viewPerso(){
       var dm=it.date.slice(8,10)+'/'+it.date.slice(5,7);
       var isRet=it.kind==="ret";
       var cls=isRet?"pos":"out",sign=isRet?"+":"−";
-      var sub=isRet?"Argent pris pour toi":"Dépense perso";
+      var sub=isRet?"Argent pris pour toi":(it.kind==="requ"?"Rééquilibrage vers un compte pro":"Dépense perso");
       var del=(!ro&&it.id)?'<button class="icon-btn small" data-act="delMov" data-arg="'+it.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button>':'';
       h+='<div class="mov-row"><div class="mov-main"><div class="mov-top"><span class="mov-type">'+esc(it.label)+'</span><span class="mov-heure">'+dm+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(toE(it.montantC))+' €</span>'+del+'</div></div>';
     });
@@ -487,6 +510,13 @@ function decompoComptesHTML(caC,revolutC,especesC){
   var cell=function(icon,lbl,c,brd){return '<div style="flex:1;text-align:center;'+(brd?"border-left:1px solid rgba(255,255,255,.14);border-right:1px solid rgba(255,255,255,.14);":"")+'"><div style="font-size:11.5px;opacity:.85;white-space:nowrap;">'+icon+' '+lbl+'</div><div class="num" style="font-size:15px;font-weight:800;margin-top:2px;'+(c<0?"color:#FF9B9B;":"")+'">'+formatCompact(toE(c))+' €</div></div>';};
   return '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;padding-top:11px;border-top:1px solid rgba(255,255,255,.16);">'+cell("💳","CB",caC,false)+cell("📲","Revolut",revolutC,true)+cell("💵","Espèces",especesC,false)+'</div>';
 }
+function persoDecompoHTML(by){
+  by=by||{especes:0,ca:0,revolut:0};
+  var cell=function(icon,lbl,c){return '<div style="flex:1;text-align:center;"><div style="font-size:11.5px;opacity:.85;white-space:nowrap;">'+icon+' '+lbl+'</div><div class="num" style="font-size:15px;font-weight:800;margin-top:2px;'+(c<0?"color:#FF9B9B;":"")+'">'+formatCompact(toE(c))+' €</div></div>';};
+  var cells=cell("💵","Espèces perso",by.especes||0)+cell("📲","Revolut perso",by.revolut||0);
+  if((by.ca||0)!==0)cells+=cell("💳","CB perso",by.ca);
+  return '<div style="display:flex;justify-content:space-around;gap:8px;margin-top:12px;padding-top:11px;border-top:1px solid rgba(255,255,255,.16);">'+cells+'</div>';
+}
 function viewHome(){
   var s=state.settings,movs=activeMovs();
   var bal=balancesC(s,movs);
@@ -516,6 +546,7 @@ function viewHome(){
     h+='</div>';
   }
   h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p>'+decompoComptesHTML(bal.ca,bal.revolut,dispoEsp)+'</div>';
+  h+='<button class="link-row" data-act="openTransfert">🔄 Transfert entre comptes '+ic("chevron")+'</button>';
   h+=dettesPanelHTML(activeDebts(),false);
   var cag=persoCagnotte();
   h+='<div style="display:flex;gap:10px;margin:2px 0;">';
@@ -528,18 +559,46 @@ function viewHome(){
 }
 
 function viewAdd(){
-  var f=state.form,isV=f.type==="VENTE",isR=f.type==="REMISE",isP=f.type==="REMB",isPerso=f.type==="PERSO",isRet=f.type==="RETRAIT";
+  var f=state.form,isV=f.type==="VENTE",isR=f.type==="REMISE",isP=f.type==="REMB",isPerso=f.type==="PERSO",isRet=f.type==="RETRAIT",isT=f.type==="TRANSFERT";
   var choices=[{id:"especes",label:"Espèces"},{id:"ca",label:isV?"CB":"Crédit Agricole",sub:isV?"Crédit Agricole":null},{id:"revolut",label:"Revolut"}];
   var h='<div class="view">';
   h+='<p class="section-title">Type de mouvement</p><div class="type-grid">';
   var ks=Object.keys(TYPES);
-  for(var i=0;i<ks.length;i++){var t=TYPES[ks[i]];
+  for(var i=0;i<ks.length;i++){var t=TYPES[ks[i]];if(t.id==="TRANSFERT")continue;
     h+='<button class="type-btn'+(f.type===t.id?" active":"")+'" data-act="type" data-arg="'+t.id+'"><span class="sens-dot '+t.sens+'"></span>'+t.label+'</button>';
   }
   h+='<button class="type-btn'+(isP?" active":"")+'" data-act="type" data-arg="REMB"><span class="sens-dot sortie"></span>Paiement dette</button>';
-  h+='<button class="type-btn full2'+(f.type==="PERSO"?" active":"")+'" data-act="type" data-arg="PERSO"><span class="sens-dot sortie"></span>Dépense perso</button>';
+  h+='<button class="type-btn'+(isPerso?" active":"")+'" data-act="type" data-arg="PERSO"><span class="sens-dot sortie"></span>Dépense perso</button>';
+  h+='<button class="type-btn full2'+(isT?" active":"")+'" data-act="type" data-arg="TRANSFERT"><span class="sens-dot transfert"></span>🔄 Transfert entre comptes</button>';
   h+='</div>';
-  if(isP){
+  if(isT){
+    var trChoices=[{id:"especes",label:"💵 Espèces"},{id:"ca",label:"💳 Crédit Agricole"},{id:"revolut",label:"📲 Revolut"}];
+    var persoChoices=[{id:"especes",label:"💵 Espèces perso"},{id:"revolut",label:"📲 Revolut perso"}];
+    var isRequ=f.nature==="R";
+    h+='<p class="section-title">Nature du transfert</p><div class="seg">';
+    h+='<button class="seg-btn'+(!isRequ?" active":"")+'" data-act="trNature" data-arg="S">🔄 Mouvement simple</button>';
+    h+='<button class="seg-btn'+(isRequ?" active":"")+'" data-act="trNature" data-arg="R">⚖️ Rééquilibrage perso→pro</button>';
+    h+='</div>';
+    if(isRequ){
+      h+='<div class="note-box">Tu couvres un compte <b>pro</b> avec ton <b>argent perso</b> (ex : ta femme a payé de l\'essence perso sur Revolut). Ça sort de ton enveloppe perso et renfloue le compte pro. Neutre sur ton patrimoine total.</div>';
+      h+='<p class="section-title">Depuis mon argent perso</p><div class="seg">';
+      for(var ti=0;ti<persoChoices.length;ti++){var pc=persoChoices[ti];h+='<button class="seg-btn'+(f.src===pc.id?" active":"")+'" data-act="trSrc" data-arg="'+pc.id+'">'+pc.label+'</button>';}
+      h+='</div>';
+      h+='<p class="section-title">Vers le compte pro</p><div class="seg">';
+      for(var tj=0;tj<trChoices.length;tj++){var dc=trChoices[tj];if(dc.id===f.src)continue;h+='<button class="seg-btn'+(f.dst===dc.id?" active":"")+'" data-act="trDst" data-arg="'+dc.id+'">'+dc.label+'</button>';}
+      h+='</div>';
+    }else{
+      h+='<div class="note-box">Déplace de l\'argent d\'un compte à l\'autre (ex : dépôt d\'espèces sur la CB). <b>Neutre sur le total</b> : le compte source baisse, le compte destination monte d\'autant.</div>';
+      h+='<p class="section-title">Depuis</p><div class="seg">';
+      for(var ta=0;ta<trChoices.length;ta++){var sc=trChoices[ta];h+='<button class="seg-btn'+(f.src===sc.id?" active":"")+'" data-act="trSrc" data-arg="'+sc.id+'">'+sc.label+'</button>';}
+      h+='</div>';
+      h+='<p class="section-title">Vers</p><div class="seg">';
+      for(var tb=0;tb<trChoices.length;tb++){var dc2=trChoices[tb];if(dc2.id===f.src)continue;h+='<button class="seg-btn'+(f.dst===dc2.id?" active":"")+'" data-act="trDst" data-arg="'+dc2.id+'">'+dc2.label+'</button>';}
+      h+='</div>';
+    }
+    h+='<p class="section-title">Montant</p><div class="amount-field"><input id="montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(f.montant||"")+'"><span class="amount-cur">€</span></div>';
+    h+='<p class="section-title">Libellé (optionnel)</p><input id="note" class="text-input" type="text" placeholder="ex : Rééquilibrage essence, dépôt banque…" value="'+esc(f.note||"")+'">';
+  }else if(isP){
     var open=activeDebts().filter(function(d){return !d.settled_day;});
     h+='<p class="section-title">Quelle dette payer ?</p>';
     if(!open.length){
@@ -573,13 +632,18 @@ function viewAdd(){
       h+='<p class="section-title">Sens du transfert</p><div class="transfer-box">Espèces <span class="arrow">→</span> Crédit Agricole</div>';
     }else if(isPerso){
       h+='<div class="note-box">Dépense payée avec <b>ton argent perso</b> (ta cagnotte). Ça n\'affecte pas les comptes du business.</div>';
+      h+='<p class="section-title">Depuis quelle enveloppe perso ?</p><div class="seg">';
+      var persoDepChoices=[{id:"especes",label:"💵 Espèces perso"},{id:"revolut",label:"📲 Revolut perso"}];
+      for(var pk=0;pk<persoDepChoices.length;pk++){var pcc=persoDepChoices[pk];h+='<button class="seg-btn'+(f.compte===pcc.id?" active":"")+'" data-act="compte" data-arg="'+pcc.id+'">'+pcc.label+'</button>';}
+      h+='</div>';
     }else{
+      var acctChoices=isRet?[{id:"especes",label:"💵 Espèces"},{id:"revolut",label:"📲 Revolut"}]:choices;
       h+='<p class="section-title">'+(isRet?"Retiré depuis quel compte ?":"Compte à débiter")+'</p><div class="seg">';
-      for(var k=0;k<choices.length;k++){var c2=choices[k];
+      for(var k=0;k<acctChoices.length;k++){var c2=acctChoices[k];
         h+='<button class="seg-btn'+(f.compte===c2.id?" active":"")+'" data-act="compte" data-arg="'+c2.id+'">'+c2.label+'</button>';
       }
       h+='</div>';
-      if(isRet)h+='<div class="note-box">Cet argent <b>sort du business</b> et va dans ta cagnotte perso.</div>';
+      if(isRet)h+='<div class="note-box">Cet argent <b>sort du business</b> et va dans ta cagnotte perso ('+((COMPTES[f.compte]||{}).nom||"")+').</div>';
     }
     if(isPerso||f.type==="ACHAT"||f.type==="CHARGE"){h+='<button type="button" class="btn btn-ghost full" style="margin-top:2px;" data-act="scanTicket">📷 Scanner le ticket</button>'+ocrInfoHTML();}
     h+='<p class="section-title">Montant</p><div class="amount-field"><input id="montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(f.montant||"")+'"><span class="amount-cur">€</span></div>';
@@ -608,11 +672,12 @@ function viewMovements(){
   }else{
     h+='<div class="mov-list">';
     for(var i=0;i<tmovs.length;i++){var m=tmovs[i];
-      var vente=m.type==="VENTE",remise=m.type==="REMISE";
-      var cls=vente?"pos":(remise?"tr":"out"),sign=vente?"+":(remise?"":"-");
-      var sub=remise?"Espèces → Crédit Agricole":COMPTES[m.compte].nom;
-      if(m.note)sub+=" · "+esc(m.note);
-      h+='<div class="mov-row" data-act="editMov" data-arg="'+m.id+'"><div class="mov-main"><div class="mov-top"><span class="mov-type">'+TYPES[m.type].label+'</span><span class="mov-heure">'+frHeure(m.ts)+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(m.montant)+' €</span><button class="icon-btn small" data-act="delMov" data-arg="'+m.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button></div></div>';
+      var vente=m.type==="VENTE",remise=m.type==="REMISE",transf=m.type==="TRANSFERT";
+      var cls=vente?"pos":(remise||transf?"tr":"out"),sign=vente?"+":(remise||transf?"":"-");
+      var typeLbl=TYPES[m.type].label,sub;
+      if(transf){var tr=parseTransfert(m),sn=(COMPTES[tr.src]||{}).nom||tr.src,dn=(COMPTES[tr.dst]||{}).nom||tr.dst;typeLbl=tr.nature==="R"?"⚖️ Rééquilibrage":"🔄 Transfert";sub=(tr.nature==="R"?"Argent perso → "+dn:sn+" → "+dn)+(tr.label?" · "+esc(tr.label):"");}
+      else{sub=remise?"Espèces → Crédit Agricole":COMPTES[m.compte].nom;if(m.note)sub+=" · "+esc(m.note);}
+      h+='<div class="mov-row" data-act="editMov" data-arg="'+m.id+'"><div class="mov-main"><div class="mov-top"><span class="mov-type">'+typeLbl+'</span><span class="mov-heure">'+frHeure(m.ts)+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(m.montant)+' €</span><button class="icon-btn small" data-act="delMov" data-arg="'+m.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button></div></div>';
     }
     h+='</div><p class="hint-foot">Touchez un mouvement pour le modifier.</p>';
   }
@@ -861,6 +926,11 @@ function buildMovFromForm(){
     var mtp=round2(parseMontant(f.montant));
     return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mtp,note:"Perso · "+((f.note||"").trim()||"dépense"),_dirty:true};
   }
+  if(f.type==="TRANSFERT"){
+    var mtt=round2(parseMontant(f.montant));
+    var note="T|"+(f.nature==="R"?"R":"S")+"|"+(f.src||"especes")+"|"+(f.dst||"ca")+"|"+((f.note||"").trim());
+    return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"TRANSFERT",compte:f.src||"especes",montant:mtt,note:note,_dirty:true};
+  }
   var montant=round2(parseMontant(f.montant));
   return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:f.type,compte:f.type==="REMISE"?"especes":f.compte,montant:montant,note:(f.note||"").trim(),_dirty:true};
 }
@@ -868,13 +938,20 @@ function findMov(id){for(var i=0;i<state.movements.length;i++)if(state.movements
 function findDette(id){for(var i=0;i<state.debts.length;i++)if(state.debts[i].id===id)return state.debts[i];return null;}
 function commitMov(m){
   var i=-1;for(var j=0;j<state.movements.length;j++)if(state.movements[j].id===m.id){i=j;break;}
+  var isNew=i<0;
   if(i>=0)state.movements[i]=m;else state.movements.push(m);
   // Paiement de dette : marque la dette réglée (elle sort du « ce que je dois »)
   if(m.dette_id){var dt=findDette(m.dette_id);if(dt){dt.montant=round2((dt.montant||0)-m.montant);if(dt.montant<=0.004){dt.montant=0;dt.settled_day=m.date;}dt._dirty=true;}}
   saveCache();state.editId=null;state.form=null;
-  if(m.dette_id)state.view="registre";else if(i>=0){state.view="movements";state.movDay=m.date;}else state.view="home";
+  if(m.dette_id)state.view="registre";else if(!isNew){state.view="movements";state.movDay=m.date;}else state.view="home";
+  // Proposition auto de rééquilibrage : dépense business (Achat/Charge) sortie d'un compte pro (Revolut/CA)
+  var proposeReeq=isNew&&(m.type==="CHARGE"||m.type==="ACHAT")&&!m.dette_id&&!isPersoDep(m)&&(m.compte==="revolut"||m.compte==="ca");
+  if(proposeReeq){
+    var proNom=(COMPTES[m.compte]||{}).nom||m.compte,amt=m.montant,dstAcct=m.compte,lbl=(m.note||"").trim()||"dépense perso";
+    state.confirm={message:"Cette dépense ("+money(amt)+") sort de "+proNom+" (compte pro). C'était perso ? Je peux la couvrir avec ton argent perso (Espèces perso → "+proNom+") pour garder tes comptes justes.",danger:false,confirmLabel:"Oui, rééquilibrer",onYes:function(){state.confirm=null;var reeq={id:uuid(),date:m.date,ts:Date.now(),type:"TRANSFERT",compte:"especes",montant:amt,note:"T|R|especes|"+dstAcct+"|"+lbl,_dirty:true};commitMov(reeq);showToast("Rééquilibré depuis Espèces perso");}};
+  }
   render();sync().then(render);
-  showToast(m.dette_id?"Dette payée":(i>=0?"Mouvement modifié":"Mouvement enregistré"));
+  if(!proposeReeq)showToast(m.dette_id?"Dette payée":(!isNew?"Mouvement modifié":"Mouvement enregistré"));
 }
 function submitMov(){
   var f=state.form;
@@ -890,8 +967,9 @@ function submitMov(){
     if(!(montant>0)){showToast("Montant invalide");return;}
   }
   var m=buildMovFromForm();
+  if(m.type==="TRANSFERT"){var trv=parseTransfert(m);if(trv.src===trv.dst){showToast("Choisis deux comptes différents");return;}}
   var debit=null;
-  if(m.type==="REMISE")debit="especes";else if(m.type!=="VENTE")debit=m.compte;
+  if(m.type==="REMISE")debit="especes";else if(m.type==="TRANSFERT"){var trg=parseTransfert(m);debit=(trg.nature==="S")?trg.src:null;}else if(m.type!=="VENTE")debit=m.compte;
   if(debit){
     var others=activeMovs().filter(function(x){return x.id!==m.id;});
     var bal=balancesC(state.settings,others.concat([m]));
@@ -1180,7 +1258,11 @@ document.addEventListener("click",function(ev){
   if(act==="back"){state.editId=null;state.form=null;state.view="home";render();return;}
   if(act==="add"){openAdd();return;}
   if(act==="quick"){openAdd({type:"VENTE",compte:arg});return;}
-  if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if((arg==="VENTE"||arg==="REMB"||arg==="PERSO")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
+  if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if(arg==="TRANSFERT"){if(!state.form.nature)state.form.nature="S";if(!state.form.src)state.form.src="especes";if(!state.form.dst||state.form.dst===state.form.src)state.form.dst=(state.form.src==="especes"?"ca":"especes");}else if((arg==="PERSO"||arg==="RETRAIT")){if(state.form.compte==="ca"||ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";}else if((arg==="VENTE"||arg==="REMB")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
+  if(act==="openTransfert"){openAdd({type:"TRANSFERT",nature:"S",src:"especes",dst:"ca",montant:"",note:""});return;}
+  if(act==="trNature"){captureForm();state.form.nature=arg;if(arg==="R"&&state.form.src!=="especes"&&state.form.src!=="revolut")state.form.src="especes";if(state.form.dst===state.form.src)state.form.dst=(state.form.src==="especes"?"ca":"especes");render();return;}
+  if(act==="trSrc"){captureForm();state.form.src=arg;if(state.form.dst===arg)state.form.dst=(arg==="especes"?"ca":"especes");render();return;}
+  if(act==="trDst"){captureForm();state.form.dst=arg;render();return;}
   if(act==="selDette"){state.form.dette_id=arg;var sd=findDette(arg);if(sd)state.form.montant=String(round2(sd.montant)).replace(".",",");render();return;}
   if(act==="payDette"){payDette(arg);return;}
   if(act==="retraitPerso"){openAdd({type:"RETRAIT",compte:"especes"});return;}
@@ -1192,7 +1274,7 @@ document.addEventListener("click",function(ev){
   if(act==="depensePerso"){openAdd({type:"PERSO",compte:"especes"});return;}
   if(act==="compte"){captureForm();state.form.compte=arg;render();return;}
   if(act==="submitMov"){captureForm();submitMov();return;}
-  if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};state.view="add";render();}return;}
+  if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;if(m.type==="TRANSFERT"){var trE=parseTransfert(m);state.form={type:"TRANSFERT",nature:trE.nature,src:trE.src,dst:trE.dst,montant:String(m.montant).replace(".",","),note:trE.label||""};}else{state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};}state.view="add";render();}return;}
   if(act==="delMov"){deleteMov(arg);return;}
   if(act==="editMarge"){editMarge(arg);return;}
   if(act==="addDette"){addDette();return;}
