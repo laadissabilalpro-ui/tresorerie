@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: transferts-perso-2026-07-05b */
+   build: transferts-perso-2026-07-05c */
 (function(){
 "use strict";
 
@@ -353,6 +353,7 @@ var state={
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 var RESERVE_MARK="__RESERVE_PERSO__";
+var AUTO_REEQ_PROMPT=false; // Prompt auto de rééquilibrage après une charge sur compte pro : DÉSACTIVÉ (Bilal gère ses rééquilibrages via « 🔄 Transfert entre comptes »). Repasser à true pour réactiver le code (conservé en réserve).
 function isPersoDep(m){return typeof m.note==="string"&&m.note.indexOf("Perso · ")===0;}
 function isRetraitPerso(m){return m.type==="RETRAIT"||m.note===RESERVE_MARK;}
 function activeMovs(){return state.movements.filter(function(m){return !m._deleted && !isPersoDep(m);});}
@@ -945,7 +946,7 @@ function commitMov(m){
   saveCache();state.editId=null;state.form=null;
   if(m.dette_id)state.view="registre";else if(!isNew){state.view="movements";state.movDay=m.date;}else state.view="home";
   // Proposition auto de rééquilibrage : dépense business (Achat/Charge) sortie d'un compte pro (Revolut/CA)
-  var proposeReeq=isNew&&(m.type==="CHARGE"||m.type==="ACHAT")&&!m.dette_id&&!isPersoDep(m)&&(m.compte==="revolut"||m.compte==="ca");
+  var proposeReeq=AUTO_REEQ_PROMPT&&isNew&&(m.type==="CHARGE"||m.type==="ACHAT")&&!m.dette_id&&!isPersoDep(m)&&(m.compte==="revolut"||m.compte==="ca");
   if(proposeReeq){
     var proNom=(COMPTES[m.compte]||{}).nom||m.compte,amt=m.montant,dstAcct=m.compte,lbl=(m.note||"").trim()||"dépense perso";
     state.confirm={message:"Cette dépense ("+money(amt)+") sort de "+proNom+" (compte pro). C'était perso ? Je peux la couvrir avec ton argent perso (Espèces perso → "+proNom+") pour garder tes comptes justes.",danger:false,confirmLabel:"Oui, rééquilibrer",onYes:function(){state.confirm=null;var reeq={id:uuid(),date:m.date,ts:Date.now(),type:"TRANSFERT",compte:"especes",montant:amt,note:"T|R|especes|"+dstAcct+"|"+lbl,_dirty:true};commitMov(reeq);showToast("Rééquilibré depuis Espèces perso");}};
