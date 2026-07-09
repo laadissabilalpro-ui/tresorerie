@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: transferts-perso-2026-07-05c */
+   build: stock-fix-2026-07-09 */
 (function(){
 "use strict";
 
@@ -494,11 +494,18 @@ function viewStock(){
     h+='<p class="muted" style="text-align:center;padding:18px 0;">Chargement du stock…</p>';
   } else if(s.status==="error"){
     h+='<div class="note-box" style="border-left:3px solid #d9534f;">Stock indisponible pour le moment. Touche « Rafraîchir » pour réessayer.</div>';
-  } else if(s.status==="ok"&&s.data){
+  } else if(s.status==="ok"&&s.data&&s.data.success!==false){
     var d=s.data;
+    var cats=(d&&d.categories)||{};
+    var qty=function(name){var c=cats[name];if(c&&typeof c==="object")return (c.quantite_totale!=null?c.quantite_totale:c.quantite_libre);var flat=d[name.toLowerCase()];return flat!=null?flat:null;};
     var cell=function(lbl,n){var v=(n==null||isNaN(+n))?"—":String(n);return '<div style="flex:1;text-align:center;padding:16px 6px;background:var(--bg);border-radius:12px;"><div class="num" style="font-size:30px;font-weight:800;color:var(--ink);line-height:1;">'+v+'</div><div style="font-size:12.5px;color:var(--ink2);margin-top:5px;">'+lbl+'</div></div>';};
-    h+='<div style="display:flex;gap:8px;">'+cell("Parfums",d.parfums)+cell("Sprays",d.sprays)+cell("Gold",d.gold)+'</div>';
-    if(d.genere_le)h+='<p class="field-hint" style="margin-top:12px;text-align:center;">Dernière mise à jour : '+esc(fmtStockDate(d.genere_le))+'</p>';
+    h+='<div style="display:flex;gap:8px;">'+cell("Parfums",qty("Parfums"))+cell("Sprays",qty("Sprays"))+cell("Gold",qty("Gold"))+'</div>';
+    var tot=(d&&d.total&&d.total.quantite_totale!=null)?d.total.quantite_totale:null;
+    if(tot!=null)h+='<p class="field-hint" style="margin-top:11px;text-align:center;font-weight:700;color:var(--ink);">'+tot+' articles au total</p>';
+    var sdt=d.date||d.genere_le;
+    if(sdt){var dtx=/^\d{4}-\d{2}-\d{2}$/.test(String(sdt))?frDate(sdt):fmtStockDate(sdt);h+='<p class="field-hint" style="margin-top:4px;text-align:center;">Mis à jour le '+esc(dtx)+'</p>';}
+  } else if(s.status==="ok"){
+    h+='<div class="note-box" style="border-left:3px solid #d9534f;">Stock indisponible pour le moment. Touche « Rafraîchir » pour réessayer.</div>';
   } else {
     h+='<p class="muted" style="text-align:center;padding:18px 0;">Chargement…</p>';
   }
