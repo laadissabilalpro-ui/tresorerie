@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: stock-fix-2026-07-09 */
+   build: perso-edit-2026-07-09 */
 (function(){
 "use strict";
 
@@ -466,11 +466,14 @@ function viewPerso(){
       var dm=it.date.slice(8,10)+'/'+it.date.slice(5,7);
       var isRet=it.kind==="ret";
       var cls=isRet?"pos":"out",sign=isRet?"+":"−";
-      var sub=isRet?"Argent pris pour toi":(it.kind==="requ"?"Rééquilibrage vers un compte pro":"Dépense perso");
+      var acctNom=(it.acct&&COMPTES[it.acct])?COMPTES[it.acct].nom:"";
+      var sub=isRet?("Argent pris pour toi"+(acctNom?" · "+acctNom:"")):(it.kind==="requ"?"Rééquilibrage vers un compte pro":("Dépense perso"+(acctNom?" · "+acctNom:"")));
       var del=(!ro&&it.id)?'<button class="icon-btn small" data-act="delMov" data-arg="'+it.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button>':'';
-      h+='<div class="mov-row"><div class="mov-main"><div class="mov-top"><span class="mov-type">'+esc(it.label)+'</span><span class="mov-heure">'+dm+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(toE(it.montantC))+' €</span>'+del+'</div></div>';
+      var rowAttr=(!ro&&it.id)?' data-act="editMov" data-arg="'+it.id+'"':'';
+      h+='<div class="mov-row"'+rowAttr+'><div class="mov-main"><div class="mov-top"><span class="mov-type">'+esc(it.label)+'</span><span class="mov-heure">'+dm+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(toE(it.montantC))+' €</span>'+del+'</div></div>';
     });
     h+='</div>';
+    if(!ro)h+='<p class="hint-foot">Touchez un mouvement pour le modifier.</p>';
   }
   h+='<button class="link-row" data-act="nav" data-arg="'+(ro?"registre":"home")+'">'+ic("chevron")+' Retour</button>';
   h+='</div>';
@@ -951,7 +954,7 @@ function commitMov(m){
   // Paiement de dette : marque la dette réglée (elle sort du « ce que je dois »)
   if(m.dette_id){var dt=findDette(m.dette_id);if(dt){dt.montant=round2((dt.montant||0)-m.montant);if(dt.montant<=0.004){dt.montant=0;dt.settled_day=m.date;}dt._dirty=true;}}
   saveCache();state.editId=null;state.form=null;
-  if(m.dette_id)state.view="registre";else if(!isNew){state.view="movements";state.movDay=m.date;}else state.view="home";
+  if(m.dette_id)state.view="registre";else if(isPersoDep(m)||isRetraitPerso(m)||(isTransfert(m)&&parseTransfert(m).nature==="R"))state.view="perso";else if(!isNew){state.view="movements";state.movDay=m.date;}else state.view="home";
   // Proposition auto de rééquilibrage : dépense business (Achat/Charge) sortie d'un compte pro (Revolut/CA)
   var proposeReeq=AUTO_REEQ_PROMPT&&isNew&&(m.type==="CHARGE"||m.type==="ACHAT")&&!m.dette_id&&!isPersoDep(m)&&(m.compte==="revolut"||m.compte==="ca");
   if(proposeReeq){
@@ -1282,7 +1285,7 @@ document.addEventListener("click",function(ev){
   if(act==="depensePerso"){openAdd({type:"PERSO",compte:"especes"});return;}
   if(act==="compte"){captureForm();state.form.compte=arg;render();return;}
   if(act==="submitMov"){captureForm();submitMov();return;}
-  if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;if(m.type==="TRANSFERT"){var trE=parseTransfert(m);state.form={type:"TRANSFERT",nature:trE.nature,src:trE.src,dst:trE.dst,montant:String(m.montant).replace(".",","),note:trE.label||""};}else{state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};}state.view="add";render();}return;}
+  if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;if(m.type==="TRANSFERT"){var trE=parseTransfert(m);state.form={type:"TRANSFERT",nature:trE.nature,src:trE.src,dst:trE.dst,montant:String(m.montant).replace(".",","),note:trE.label||""};}else if(isPersoDep(m)){state.form={type:"PERSO",compte:(m.compte==="ca"?"especes":m.compte),montant:String(m.montant).replace(".",","),note:(m.note||"").replace(/^Perso · /,"")};}else{state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};}state.view="add";render();}return;}
   if(act==="delMov"){deleteMov(arg);return;}
   if(act==="editMarge"){editMarge(arg);return;}
   if(act==="addDette"){addDette();return;}
