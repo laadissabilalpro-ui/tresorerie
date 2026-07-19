@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: perso-transfer-2026-07-09 */
+   build: registre-fold-2026-07 */
 (function(){
 "use strict";
 
@@ -349,7 +349,7 @@ var state={
   code:lget("treso:code",""),
   readOnly:false,
   settings:null, movements:[], debts:[], jours:{}, joursDirty:{},
-  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null,
+  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{},
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 var RESERVE_MARK="__RESERVE_PERSO__";
@@ -754,6 +754,10 @@ function ledgerTableHTML(L,ro,moisMap){
     +'table.ledger td.solde{font-size:15px;}'
     +'table.ledger .led-sub{font-size:11px;color:var(--ink2);margin-top:1px;font-weight:400;}'
     +'table.ledger tr.moisrecap td{background:rgba(201,169,97,.15);font-weight:700;font-size:12px;color:var(--ink);padding:9px 10px;border-top:2px solid var(--accent);line-height:1.5;}'
+    +'table.ledger tr.mois-fold td{background:var(--bg);cursor:pointer;padding:11px 10px;border-top:1.5px solid var(--line);}'
+    +'table.ledger tr.mois-fold .mf-line{display:flex;justify-content:space-between;align-items:baseline;gap:8px;white-space:nowrap;}'
+    +'table.ledger tr.mois-fold .mf-nom{font-weight:800;font-size:13px;color:var(--ink);}'
+    +'table.ledger tr.mois-fold .mf-info{font-size:11.5px;font-weight:700;color:var(--ink2);white-space:nowrap;}'
     +'</style>';
   var h=st+'<table class="ledger"><colgroup><col style="width:34%"><col style="width:22%"><col style="width:22%"><col style="width:22%"></colgroup>';
   h+='<thead><tr><th>Libellé</th><th class="r">Recettes</th><th class="r">Débit</th><th class="r">Solde</th></tr></thead><tbody>';
@@ -762,7 +766,16 @@ function ledgerTableHTML(L,ro,moisMap){
     L.openLines.forEach(function(li){h+='<tr><td>'+esc(li.label)+(li.sub?'<div class="led-sub">'+esc(li.sub)+'</div>':'')+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td></tr>';});
   }
   h+='<tr class="tot"><td>Total</td><td></td><td></td><td class="r solde">'+formatNum(toE(L.openC))+'</td></tr>';
+  var curMo=today().slice(0,7);
   L.days.forEach(function(d,idx){
+    var moF=d.date.slice(0,7),isCurMo=(moF===curMo),moOpen=isCurMo||(state.regMoisOpen&&state.regMoisOpen[moF]);
+    var firstOfMo=(idx===0)||(L.days[idx-1].date.slice(0,7)!==moF);
+    if(firstOfMo&&!isCurMo){
+      var tmF=moisMap&&moisMap[moF];
+      if(moOpen)h+='<tr class="mois-fold" data-act="regToggleMois" data-arg="'+moF+'"><td colspan="4"><div class="mf-line"><span class="mf-nom">▾ '+nomMois(moF)+'</span><span class="mf-info">replier</span></div></td></tr>';
+      else h+='<tr class="mois-fold" data-act="regToggleMois" data-arg="'+moF+'"><td colspan="4"><div class="mf-line"><span class="mf-nom">▸ '+nomMois(moF)+'</span><span class="mf-info">'+(tmF?('Ventes '+formatCompact(toE(tmF.total))+' € · '):'')+'toucher pour ouvrir</span></div></td></tr>';
+    }
+    if(!moOpen)return;
     h+='<tr class="grp"><td colspan="4">'+frDateLong(d.date)+'</td></tr>';
     d.lines.forEach(function(li){h+='<tr><td>'+esc(li.label)+(li.sub?'<div class="led-sub">'+esc(li.sub)+'</div>':'')+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td></tr>';});
     h+='<tr class="tot"><td>Total</td><td></td><td></td><td class="r solde">'+formatNum(toE(d.soldeC))+'</td></tr>';
@@ -1271,13 +1284,14 @@ document.addEventListener("click",function(ev){
   if(el.getAttribute("data-stop"))ev.stopPropagation();
 
   if(state.readOnly){
-    var ok={retrySync:1,onbCode:1,stockRefresh:1};
+    var ok={retrySync:1,onbCode:1,stockRefresh:1,regToggleMois:1};
     var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"||arg==="stock"));
     if(!ok[act]&&!navOk)return;
   }
 
   if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();if(arg==="movements")state.movDay=today();if(arg==="stock"){fetchStock();return;}render();return;}
   if(act==="stockRefresh"){fetchStock();return;}
+  if(act==="regToggleMois"){state.regMoisOpen=state.regMoisOpen||{};state.regMoisOpen[arg]=!state.regMoisOpen[arg];render();return;}
   if(act==="movDayShift"){var d0=state.movDay||today();var dd=new Date(d0+"T12:00:00");dd.setDate(dd.getDate()+(+arg));var nd=dateKey(dd);if(nd>today())nd=today();state.movDay=nd;render();return;}
   if(act==="movToday"){state.movDay=today();render();return;}
   if(act==="settings"){state.view="settings";render();return;}
