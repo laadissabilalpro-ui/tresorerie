@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: registre-fold-2026-07 */
+   build: ticket-detail-ia-2026-07 */
 (function(){
 "use strict";
 
@@ -349,7 +349,7 @@ var state={
   code:lget("treso:code",""),
   readOnly:false,
   settings:null, movements:[], debts:[], jours:{}, joursDirty:{},
-  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{},
+  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{}, ticketView:null, ocrTicket:null,
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 var RESERVE_MARK="__RESERVE_PERSO__";
@@ -357,12 +357,16 @@ var AUTO_REEQ_PROMPT=false; // Prompt auto de rééquilibrage après une charge 
 function isPersoDep(m){return typeof m.note==="string"&&m.note.indexOf("Perso · ")===0;}
 function isRetraitPerso(m){return m.type==="RETRAIT"||m.note===RESERVE_MARK;}
 function isPersoInternal(m){return isTransfert(m)&&parseTransfert(m).nature==="P";}
+/* Détail de ticket scanné, encodé en fin de note entre ⟦ … ⟧ (JSON {m,d,b,r,n,items:[[nom,prix],…]}) */
+function stripTicket(s){return String(s==null?"":s).replace(/\s*⟦[\s\S]*⟧\s*$/,"");}
+function hasTicket(s){return /⟦[\s\S]*⟧\s*$/.test(String(s==null?"":s));}
+function ticketOf(s){var m=String(s==null?"":s).match(/⟦([\s\S]*)⟧\s*$/);if(!m)return null;try{var o=JSON.parse(m[1]);return (o&&o.items&&o.items.length)?o:null;}catch(e){return null;}}
 function activeMovs(){return state.movements.filter(function(m){return !m._deleted && !isPersoDep(m) && !isPersoInternal(m);});}
 function activeDebts(){return state.debts.filter(function(d){return !d._deleted;});}
 function persoCagnotte(){
   var R=0,D=0,items=[],byAcct={especes:0,ca:0,revolut:0};
   for(var i=0;i<state.movements.length;i++){var m=state.movements[i];if(m._deleted)continue;var a=toC(m.montant);
-    if(isPersoDep(m)){D+=a;if(byAcct[m.compte]!=null)byAcct[m.compte]-=a;items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"dep",acct:m.compte,label:(m.note||"").replace(/^Perso · /,"")||"Dépense",montantC:a});}
+    if(isPersoDep(m)){D+=a;if(byAcct[m.compte]!=null)byAcct[m.compte]-=a;items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"dep",tk:hasTicket(m.note),acct:m.compte,label:stripTicket(m.note).replace(/^Perso · /,"")||"Dépense",montantC:a});}
     else if(isRetraitPerso(m)){R+=a;if(byAcct[m.compte]!=null)byAcct[m.compte]+=a;items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"ret",acct:m.compte,label:"Retrait"+(m.compte&&COMPTES[m.compte]?" ("+COMPTES[m.compte].nom+")":""),montantC:a});}
     else if(isTransfert(m)){var tr=parseTransfert(m);
       if(tr.nature==="R"){if(byAcct[tr.src]!=null)byAcct[tr.src]-=a;items.push({id:m.id,date:m.date,ts:m.ts||0,kind:"requ",acct:tr.src,label:"Rééquilibrage → "+((COMPTES[tr.dst]||{}).nom||tr.dst)+(tr.label?" · "+tr.label:""),montantC:a});}
@@ -432,6 +436,7 @@ function render(){
   if(!state.readOnly && state.view!=="add" && state.view!=="settings")html+=bottomNav();
   if(state.confirm)html+=confirmModal();
   if(state.modal)html+=modalInput();
+  if(state.ticketView)html+=ticketModal();
   app.innerHTML=html;
   if(!state.readOnly && state.view==="add"){var mi=document.getElementById("montant");if(mi)setTimeout(function(){try{mi.focus();}catch(e){}},120);}
   if(state.modal){var f0=document.getElementById(state.modal.fields[0].id);if(f0)setTimeout(function(){try{f0.focus();}catch(e){}},120);}
@@ -474,8 +479,8 @@ function viewPerso(){
       var acctNom=(it.acct&&COMPTES[it.acct])?COMPTES[it.acct].nom:"";
       var sub=isRet?("Argent pris pour toi"+(acctNom?" · "+acctNom:"")):(it.kind==="requ"?"Rééquilibrage vers un compte pro":(isPmove?(it.dir||"Transfert entre enveloppes"):("Dépense perso"+(acctNom?" · "+acctNom:""))));
       var del=(!ro&&it.id)?'<button class="icon-btn small" data-act="delMov" data-arg="'+it.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button>':'';
-      var rowAttr=(!ro&&it.id)?' data-act="editMov" data-arg="'+it.id+'"':'';
-      h+='<div class="mov-row"'+rowAttr+'><div class="mov-main"><div class="mov-top"><span class="mov-type">'+esc(it.label)+'</span><span class="mov-heure">'+dm+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(toE(it.montantC))+' €</span>'+del+'</div></div>';
+      var rowAttr=(!ro&&it.id)?(' data-act="'+(it.tk?"viewTicket":"editMov")+'" data-arg="'+it.id+'"'):'';
+      h+='<div class="mov-row"'+rowAttr+'><div class="mov-main"><div class="mov-top"><span class="mov-type">'+(it.tk?"🧾 ":"")+esc(it.label)+'</span><span class="mov-heure">'+dm+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(toE(it.montantC))+' €</span>'+del+'</div></div>';
     });
     h+='</div>';
     if(!ro)h+='<p class="hint-foot">Touchez un mouvement pour le modifier.</p>';
@@ -891,7 +896,7 @@ function visionSettingsHTML(){
   }
   h+='<div style="display:flex;gap:6px;align-items:center;"><input id="set_visionkey" class="text-input" type="password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="sk-… (colle ta clé ici)" value="" style="flex:1;"><button class="icon-btn" data-act="revealKey" aria-label="Afficher la clé" style="font-size:18px;">👁</button></div>';
   var curModel="";try{curModel=localStorage.getItem("treso:visionmodel")||"";}catch(e){}
-  h+='<input id="set_visionmodel" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="Modèle (avancé, optionnel) — défaut : Claude 3.5 Sonnet" value="'+esc(curModel)+'" style="margin-top:6px;font-size:13px;">';
+  h+='<input id="set_visionmodel" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="Modèle (avancé, optionnel) — défaut : Claude Sonnet 5 (auto)" value="'+esc(curModel)+'" style="margin-top:6px;font-size:13px;">';
   h+='<button class="btn btn-primary full" style="margin-top:8px;" data-act="saveVisionKey">Enregistrer la clé</button>';
   if(state.visionTest)h+='<div class="note-box" style="margin-top:8px;">'+esc(state.visionTest)+'</div>';
   return h;
@@ -906,6 +911,23 @@ function bottomNav(){
 function confirmModal(){
   var c=state.confirm;
   return '<div class="overlay" data-act="confirmNo"><div class="modal" data-stop="1"><p class="modal-msg">'+esc(c.message)+'</p><div class="modal-actions"><button class="btn btn-ghost" data-act="confirmNo">Annuler</button><button class="btn '+(c.danger?"btn-danger":"btn-primary")+'" data-act="confirmYes">'+esc(c.confirmLabel||"Confirmer")+'</button></div></div></div>';
+}
+function ticketModal(){
+  var m=findMov(state.ticketView);
+  var tk=m?ticketOf(m.note):null;
+  if(!m||!tk)return "";
+  var h='<div class="overlay" data-act="ticketClose"><div class="modal" data-stop="1" style="max-height:76vh;overflow-y:auto;">';
+  h+='<p class="modal-msg" style="margin-bottom:2px;">🧾 '+esc(tk.m||"Ticket")+'</p>';
+  h+='<div style="font-size:12px;color:var(--ink2);text-align:center;">'+(tk.d?esc(tk.d)+' · ':'')+frDate(m.date)+'</div>';
+  h+='<div style="margin-top:12px;border-top:1px solid rgba(0,0,0,.08);">';
+  (tk.items||[]).forEach(function(it){var nom=it[0],px=it[1];
+    h+='<div style="display:flex;justify-content:space-between;gap:10px;font-size:14px;padding:6px 0;border-bottom:1px solid rgba(0,0,0,.05);"><span>'+esc(nom)+'</span><span class="num" style="white-space:nowrap;">'+(px!=null?formatNum(px)+' €':'—')+'</span></div>';});
+  h+='</div>';
+  if(tk.r>0&&tk.b!=null)h+='<div style="display:flex;justify-content:space-between;font-size:13px;padding:7px 0;color:var(--ink2);"><span>Brut '+formatNum(tk.b)+' € − remise</span><span class="num">−'+formatNum(tk.r)+' €</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;font-size:15px;font-weight:800;padding:8px 0;border-top:1.5px solid var(--line);"><span>Total payé</span><span class="num">'+formatNum(m.montant)+' €</span></div>';
+  h+='<div class="modal-actions" style="margin-top:10px;"><button class="btn btn-ghost" data-act="ticketCloseBtn">Fermer</button><button class="btn btn-primary" data-act="ticketEdit" data-arg="'+m.id+'">Modifier</button></div>';
+  h+='</div></div>';
+  return h;
 }
 function modalInput(){
   var m=state.modal,fh="";
@@ -942,6 +964,7 @@ function openAdd(preset){
   state.editId=null;
   state.ocrDate=null;
   state.ocrInfo=null;
+  state.ocrTicket=null;
   state.form={type:"VENTE",compte:"especes",montant:"",note:""};
   if(preset){for(var k in preset)state.form[k]=preset[k];}
   state.view="add";render();
@@ -981,7 +1004,7 @@ function commitMov(m){
   if(i>=0)state.movements[i]=m;else state.movements.push(m);
   // Paiement de dette : marque la dette réglée (elle sort du « ce que je dois »)
   if(m.dette_id){var dt=findDette(m.dette_id);if(dt){dt.montant=round2((dt.montant||0)-m.montant);if(dt.montant<=0.004){dt.montant=0;dt.settled_day=m.date;}dt._dirty=true;}}
-  saveCache();state.editId=null;state.form=null;
+  saveCache();state.editId=null;state.form=null;state.ocrTicket=null;
   if(m.dette_id)state.view="registre";else if(isPersoDep(m)||isRetraitPerso(m)||(isTransfert(m)&&parseTransfert(m).nature!=="S"))state.view="perso";else if(!isNew){state.view="movements";state.movDay=m.date;}else state.view="home";
   // Proposition auto de rééquilibrage : dépense business (Achat/Charge) sortie d'un compte pro (Revolut/CA)
   var proposeReeq=AUTO_REEQ_PROMPT&&isNew&&(m.type==="CHARGE"||m.type==="ACHAT")&&!m.dette_id&&!isPersoDep(m)&&(m.compte==="revolut"||m.compte==="ca");
@@ -1006,6 +1029,7 @@ function submitMov(){
     if(!(montant>0)){showToast("Montant invalide");return;}
   }
   var m=buildMovFromForm();
+  if(f.type==="PERSO"&&state.ocrTicket){m.note=(m.note||"")+" ⟦"+JSON.stringify(state.ocrTicket)+"⟧";}
   if(m.type==="TRANSFERT"){var trv=parseTransfert(m);if(trv.src===trv.dst){showToast("Choisis deux comptes différents");return;}}
   var debit=null;
   if(m.type==="REMISE")debit="especes";else if(m.type==="TRANSFERT"){var trg=parseTransfert(m);debit=(trg.nature==="S")?trg.src:null;}else if(m.type!=="VENTE")debit=m.compte;
@@ -1106,9 +1130,19 @@ function ocrOverlay(on){
   } else if(ex){ex.remove();}
 }
 var PROMPT_TICKET='Tu lis un ticket de caisse français. Réponds UNIQUEMENT par un JSON valide, sans texte ni balises autour, au format exact : {"magasin": string|null, "date": "JJ/MM/AAAA"|null, "total_brut": number|null, "remise": number|null, "total_net": number|null, "items": [{"nom": string, "prix": number}]}. Règles : total_brut = total avant remises ; remise = montant de la cagnotte/remise/bon RÉELLEMENT DÉDUIT du total (PAS la cagnotte gagnée sur un article, souvent entre parenthèses) ; total_net = ce qui a été réellement payé = total_brut moins remise ; items = chaque article avec un nom court et courant en français (ex : "Ketchup" et non "HEINZ TOM KETC 50 SU"), prix TTC en euros (nombre, point décimal). Si une valeur est absente, mets null.';
+var PROMPT_TICKET2='Tu lis la PHOTO d\'un ticket de caisse (France / La Réunion). Analyse-le LIGNE PAR LIGNE, lentement et soigneusement, avant de répondre. Réponds UNIQUEMENT par un JSON valide, sans aucun texte autour, au format exact : {"magasin": string|null, "date": "JJ/MM/AAAA"|null, "total_brut": number|null, "remise": number|null, "total_net": number|null, "items": [{"nom": string, "prix": number}]}. NOMS DES ARTICLES : nom ULTRA-SIMPLE en français courant, 1 à 2 mots génériques = le TYPE de produit, jamais la marque ni la référence ("HEINZ TOM KETC 50 SU" → "Ketchup" ; "PRESSADE PET ORANGE" → "Jus de fruits" ; "KO COCO 33CL" → "Eau de coco 33 cl"). Pour les boissons et liquides, ajoute le volume s\'il est lisible ("Eau 1,5 L", "Lait 1 L", "Jus de fruits 1 L"). Si une référence est obscure, DÉDUIS la catégorie la plus probable (rayon, prix, contexte) au lieu de recopier le code. MAGASIN : nom d\'enseigne court et connu ("Carrefour", "Leclerc", "Run Marché", "Leader Price"), sans adresse, sans numéro, sans forme juridique. MONTANTS : prix TTC en euros, nombre à point décimal ; ligne avec quantité ("2 x 1,50") = prix TOTAL de la ligne (3.00) ; ignore TVA, sous-totaux, "rendu", points fidélité ; total_brut = total avant remise ; remise = remise/bon/cagnotte réellement DÉDUITE du total (PAS la cagnotte gagnée sur un article, souvent entre parenthèses) ; total_net = ce qui a été réellement payé. VÉRIFICATION FINALE avant de répondre : la somme des prix des items doit être proche de total_brut ; si ça ne colle pas, relis le ticket et corrige. Valeur absente = null.';
 function visionKey(){try{return localStorage.getItem("treso:visionkey")||"";}catch(e){return "";}}
 function visionProvider(k){k=(k==null?visionKey():k);if(/^sk-ant-/.test(k))return "anthropic";if(/^sk-/.test(k))return "openai";return k?"inconnu":"";}
-function visionModelFor(prov){try{var m=localStorage.getItem("treso:visionmodel");if(m)return m;}catch(e){}return prov==="anthropic"?"claude-3-5-sonnet-latest":"gpt-4o-mini";}
+function visionModelsFor(prov){
+  var man=null;try{man=localStorage.getItem("treso:visionmodel")||null;}catch(e){}
+  if(prov!=="anthropic")return [man||"gpt-4o-mini"];
+  var list=["claude-sonnet-5","claude-sonnet-4-5","claude-3-7-sonnet-latest","claude-3-5-sonnet-latest"];
+  var auto=null;try{auto=localStorage.getItem("treso:visionmodel_auto")||null;}catch(e){}
+  if(auto&&list.indexOf(auto)>0){list.splice(list.indexOf(auto),1);list.unshift(auto);}
+  if(man)list=[man].concat(list.filter(function(x){return x!==man;}));
+  return list;
+}
+function visionModelFor(prov){return visionModelsFor(prov)[0];}
 function fileToDataUrl(file){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result);};r.onerror=rej;r.readAsDataURL(file);});}
 function parseVisionJSON(txt){
   var m=String(txt||"").match(/\{[\s\S]*\}/);var obj={};try{obj=JSON.parse(m?m[0]:txt);}catch(e){obj={};}
@@ -1126,9 +1160,23 @@ function visionOCR(file){
     var key=visionKey(),prov=visionProvider(key);
     var b64=dataUrl.split(",")[1]||"";var mt=(dataUrl.match(/^data:(.*?);/)||[])[1]||"image/jpeg";
     if(prov==="anthropic"){
-      return fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true","content-type":"application/json"},body:JSON.stringify({model:visionModelFor("anthropic"),max_tokens:1024,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mt,data:b64}},{type:"text",text:PROMPT_TICKET}]}]})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error((j.error&&j.error.message)||("HTTP "+r.status));var p=parseVisionJSON((j.content&&j.content[0]&&j.content[0].text)||"");if(j.usage)p._costEur=(j.usage.input_tokens*3+j.usage.output_tokens*15)/1e6*0.93;return p;});});
+      var models=visionModelsFor("anthropic");
+      var attempt=function(i){
+        var mod=models[i];
+        return fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true","content-type":"application/json"},body:JSON.stringify({model:mod,max_tokens:2000,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mt,data:b64}},{type:"text",text:PROMPT_TICKET2}]}]})}).then(function(r){return r.json().then(function(j){
+          if(!r.ok){var msg=(j.error&&j.error.message)||("HTTP "+r.status);
+            if(i<models.length-1&&(r.status===404||/model/i.test(msg)))return attempt(i+1);
+            throw new Error(msg);}
+          try{localStorage.setItem("treso:visionmodel_auto",mod);}catch(e){}
+          var txt="";(j.content||[]).forEach(function(b){if(b&&b.type==="text")txt+=b.text||"";});
+          var p=parseVisionJSON(txt);
+          if(j.usage)p._costEur=(j.usage.input_tokens*3+j.usage.output_tokens*15)/1e6*0.93;
+          p._model=mod;
+          return p;});});
+      };
+      return attempt(0);
     }
-    return fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify({model:visionModelFor("openai"),temperature:0,max_tokens:900,messages:[{role:"user",content:[{type:"text",text:PROMPT_TICKET},{type:"image_url",image_url:{url:dataUrl}}]}]})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error((j.error&&j.error.message)||("HTTP "+r.status));var p=parseVisionJSON((j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||"");if(j.usage)p._costEur=(j.usage.prompt_tokens*0.15+j.usage.completion_tokens*0.60)/1e6*0.93;return p;});});
+    return fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify({model:visionModelFor("openai"),temperature:0,max_tokens:900,messages:[{role:"user",content:[{type:"text",text:PROMPT_TICKET2},{type:"image_url",image_url:{url:dataUrl}}]}]})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error((j.error&&j.error.message)||("HTTP "+r.status));var p=parseVisionJSON((j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||"");if(j.usage)p._costEur=(j.usage.prompt_tokens*0.15+j.usage.completion_tokens*0.60)/1e6*0.93;return p;});});
   });
 }
 function runVisionOCR(file){
@@ -1158,7 +1206,17 @@ function doTestVisionKey(){
   function done(msg){state.visionTest=msg;render();}
   function fail(e){done("❌ "+((e&&e.message)?String(e.message).slice(0,80):"échec réseau"));}
   if(prov==="anthropic"){
-    fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true","content-type":"application/json"},body:JSON.stringify({model:visionModelFor("anthropic"),max_tokens:1,messages:[{role:"user",content:"ping"}]})}).then(function(r){return r.json().then(function(j){done(r.ok?("✅ Clé Anthropic valide · modèle "+visionModelFor("anthropic")):("❌ "+((j.error&&j.error.message)||("HTTP "+r.status))));});}).catch(fail);
+    var tmods=visionModelsFor("anthropic");
+    var tTry=function(i){
+      var mod=tmods[i];
+      fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true","content-type":"application/json"},body:JSON.stringify({model:mod,max_tokens:1,messages:[{role:"user",content:"ping"}]})}).then(function(r){return r.json().then(function(j){
+        if(r.ok){try{localStorage.setItem("treso:visionmodel_auto",mod);}catch(e){}done("✅ Clé Anthropic valide · modèle "+mod);return;}
+        var msg=(j.error&&j.error.message)||("HTTP "+r.status);
+        if(i<tmods.length-1&&(r.status===404||/model/i.test(msg))){tTry(i+1);return;}
+        done("❌ "+msg);
+      });}).catch(fail);
+    };
+    tTry(0);
   }else{
     fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+k,"Content-Type":"application/json"},body:JSON.stringify({model:visionModelFor("openai"),max_tokens:1,messages:[{role:"user",content:"ping"}]})}).then(function(r){return r.json().then(function(j){done(r.ok?("✅ Clé OpenAI valide · modèle "+visionModelFor("openai")):("❌ "+((j.error&&j.error.message)||("HTTP "+r.status))));});}).catch(function(){done("❌ OpenAI bloque les appels directs depuis l'app (CORS). Crée plutôt une clé Anthropic.");});
   }
@@ -1251,7 +1309,8 @@ function applyOcr(p){
   if(p.items&&p.items.length)parts.push(p.items.slice(0,5).map(function(it){return it.nom;}).join(", "));
   var note=parts.join(" — ");
   if(note&&!(state.form.note&&state.form.note.trim()))state.form.note=note;
-  state.ocrInfo={brut:p.brut,remise:p.remise,net:p.net,date:p.date,merchant:p.merchant,items:p.items||[],_costEur:(p._costEur!=null?p._costEur:null)};
+  state.ocrInfo={brut:p.brut,remise:p.remise,net:p.net,date:p.date,merchant:p.merchant,items:p.items||[],_costEur:(p._costEur!=null?p._costEur:null),_model:p._model||null};
+  state.ocrTicket=(p.items&&p.items.length)?{m:p.merchant||null,d:p.date||null,b:p.brut,r:p.remise||0,n:p.net,items:p.items.map(function(it){return [it.nom,it.prix];})}:null;
   state.ocrDate=p.date||null;
   render();
 }
@@ -1261,6 +1320,7 @@ function ocrInfoHTML(){
   if(oi.remise>0&&oi.brut!=null){h+='<div>Brut '+money(oi.brut)+' − cagnotte '+money(oi.remise)+' = <strong>'+money(oi.net)+' payés</strong></div>';}
   else if(oi.net!=null){h+='<div>Total lu : <strong>'+money(oi.net)+'</strong></div>';}
   if(oi.date)h+='<div style="font-size:12px;color:var(--ink2);">Date ticket : '+esc(oi.date)+' (mouvement daté d\'aujourd\'hui)</div>';
+  if(oi._model)h+='<div style="font-size:11.5px;color:var(--ink2);">IA : '+esc(oi._model)+'</div>';
   if(oi._costEur!=null)h+='<div style="font-size:11.5px;color:var(--ink2);">Coût IA : '+(oi._costEur<0.01?"<0,01":oi._costEur.toFixed(3).replace(".",","))+' €</div>';
   if(oi.items&&oi.items.length){h+='<div style="margin-top:6px;border-top:1px solid rgba(0,0,0,.08);padding-top:6px;">';
     oi.items.forEach(function(it){h+='<div style="display:flex;justify-content:space-between;font-size:13px;padding:2px 0;"><span>'+esc(it.nom)+'</span><span class="num">'+money(it.prix)+'</span></div>';});
@@ -1315,7 +1375,11 @@ document.addEventListener("click",function(ev){
   if(act==="depensePerso"){openAdd({type:"PERSO",compte:"especes"});return;}
   if(act==="compte"){captureForm();state.form.compte=arg;render();return;}
   if(act==="submitMov"){captureForm();submitMov();return;}
-  if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;if(m.type==="TRANSFERT"){var trE=parseTransfert(m);state.form={type:"TRANSFERT",nature:trE.nature,src:trE.src,dst:trE.dst,montant:String(m.montant).replace(".",","),note:trE.label||""};}else if(isPersoDep(m)){state.form={type:"PERSO",compte:(m.compte==="ca"?"especes":m.compte),montant:String(m.montant).replace(".",","),note:(m.note||"").replace(/^Perso · /,"")};}else{state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};}state.view="add";render();}return;}
+  if(act==="viewTicket"){state.ticketView=arg;render();return;}
+  if(act==="ticketClose"){if(ev.target===el){state.ticketView=null;render();}return;}
+  if(act==="ticketCloseBtn"){state.ticketView=null;render();return;}
+  if(act==="ticketEdit"){state.ticketView=null;var mm=findMov(arg);if(mm){state.editId=arg;state.ocrTicket=ticketOf(mm.note);state.ocrInfo=null;state.ocrDate=null;state.form={type:"PERSO",compte:(mm.compte==="ca"?"especes":mm.compte),montant:String(mm.montant).replace(".",","),note:stripTicket(mm.note).replace(/^Perso · /,"")};state.view="add";}render();return;}
+  if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;state.ocrTicket=ticketOf(m.note);state.ocrInfo=null;state.ocrDate=null;if(m.type==="TRANSFERT"){var trE=parseTransfert(m);state.form={type:"TRANSFERT",nature:trE.nature,src:trE.src,dst:trE.dst,montant:String(m.montant).replace(".",","),note:trE.label||""};}else if(isPersoDep(m)){state.form={type:"PERSO",compte:(m.compte==="ca"?"especes":m.compte),montant:String(m.montant).replace(".",","),note:stripTicket(m.note).replace(/^Perso · /,"")};}else{state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};}state.view="add";render();}return;}
   if(act==="delMov"){deleteMov(arg);return;}
   if(act==="editMarge"){editMarge(arg);return;}
   if(act==="addDette"){addDette();return;}
