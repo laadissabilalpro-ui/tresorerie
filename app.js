@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: print-safari-2026-07 */
+   build: ventes-categorie-2026-07 */
 (function(){
 "use strict";
 
@@ -349,7 +349,7 @@ var state={
   code:lget("treso:code",""),
   readOnly:false,
   settings:null, movements:[], debts:[], jours:{}, joursDirty:{},
-  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{}, ticketView:null, ocrTicket:null, printMois:null, printPick:false,
+  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{}, ticketView:null, ocrTicket:null, printMois:null, printPick:false, ventesJour:{}, ventesJourSt:{},
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 var RESERVE_MARK="__RESERVE_PERSO__";
@@ -492,6 +492,24 @@ function viewPerso(){
   return h;
 }
 var STOCK_URL="https://dorblanc-backend-production.up.railway.app/api/stock/par-categorie";
+var VENTES_URL="https://dorblanc-backend-production.up.railway.app/api/ventes/par-jour";
+function fetchVentesJour(mo){
+  if(!/^\d{4}-\d{2}$/.test(mo||"")||state.ventesJourSt[mo])return;
+  state.ventesJourSt[mo]="loading";
+  var last=new Date(+mo.slice(0,4),+mo.slice(5,7),0).getDate();
+  fetch(VENTES_URL+"?du="+mo+"-01&au="+mo+"-"+pad(last),{cache:"no-store"})
+    .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})
+    .then(function(j){if(j&&j.success!==false&&j.jours){state.ventesJour[mo]=j.jours;state.ventesJourSt[mo]="ok";render();}else{state.ventesJourSt[mo]="err";}})
+    .catch(function(){state.ventesJourSt[mo]="err";});
+}
+function ventesJourTxt(k){
+  var mo=k.slice(0,7),vj=state.ventesJour[mo],v=vj?vj[k]:null;
+  if(!v)return "";
+  var parts=[];
+  var seg=function(n,sing,plur){n=+n||0;if(n>0)parts.push(n+" "+(n>1?plur:sing));};
+  seg(v.Parfums,"parfum","parfums");seg(v.Sprays,"spray","sprays");seg(v.Gold,"gold","gold");seg(v.Autres,"autre","autres");
+  return parts.join(" · ");
+}
 function fmtStockDate(iso){try{var d=new Date(iso);if(isNaN(d.getTime()))return String(iso);return d.toLocaleString("fr-FR",{timeZone:"Indian/Reunion",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}).replace(", "," à ");}catch(e){return String(iso);}}
 function fetchStock(){
   state.stock={status:"loading"};render();
@@ -783,7 +801,8 @@ function ledgerTableHTML(L,ro,moisMap,noFold){
       else h+='<tr class="mois-fold" data-act="regToggleMois" data-arg="'+moF+'"><td colspan="4"><div class="mf-line"><span class="mf-nom">▸ '+nomMois(moF)+'</span><span class="mf-info">'+(tmF?('Ventes '+formatCompact(toE(tmF.total))+' € · '):'')+'toucher pour ouvrir</span></div></td></tr>';
     }
     if(!moOpen)return;
-    h+='<tr class="grp"><td colspan="4">'+frDateLong(d.date)+'</td></tr>';
+    var vtx=ventesJourTxt(d.date);
+    h+='<tr class="grp"><td colspan="4"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;"><span>'+frDateLong(d.date)+'</span>'+(vtx?'<span style="font-size:10.5px;font-weight:700;color:var(--ink2);white-space:nowrap;">🧴 '+vtx+'</span>':'')+'</div></td></tr>';
     d.lines.forEach(function(li){h+='<tr><td>'+esc(li.label)+(li.sub?'<div class="led-sub">'+esc(li.sub)+'</div>':'')+'</td><td class="r rec">'+fmtCell(li.recetteC)+'</td><td class="r deb">'+fmtCell(li.debitC)+'</td><td></td></tr>';});
     h+='<tr class="tot"><td>Total</td><td></td><td></td><td class="r solde">'+formatNum(toE(d.soldeC))+'</td></tr>';
     var mo=d.date.slice(0,7);
@@ -854,6 +873,9 @@ function viewRegistre(){
     });
     h+='</div>';
   }
+  var curMoR=today().slice(0,7),visMos={};
+  L.days.forEach(function(d){var moV=d.date.slice(0,7);if(moV===curMoR||(state.regMoisOpen&&state.regMoisOpen[moV]))visMos[moV]=1;});
+  Object.keys(visMos).forEach(fetchVentesJour);
   if(moisKeys.length)h+='<button class="link-row" data-act="printPick">🖨️ Imprimer une feuille de caisse '+ic("chevron")+'</button>';
   h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro,moisMap)+'</div>';
   h+=dettesPanelHTML(debts,ro);
@@ -948,6 +970,7 @@ function printPickModal(){
 function viewPrint(){
   var s=state.settings,movs=activeMovs(),debts=activeDebts(),ro=state.readOnly;
   var mo=state.printMois||today().slice(0,7);
+  fetchVentesJour(mo);
   var L=buildLedger(s,movs,debts,state.jours);
   var daysMo=L.days.filter(function(d){return d.date.slice(0,7)===mo;});
   var reportC=L.openC;
