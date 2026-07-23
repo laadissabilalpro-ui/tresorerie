@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: feuille-caisse-2026-07 */
+   build: print-safari-2026-07 */
 (function(){
 "use strict";
 
@@ -969,8 +969,14 @@ function viewPrint(){
   h+='<div style="display:flex;justify-content:space-between;font-size:14px;font-weight:800;padding:9px 2px;border-top:2px solid var(--accent);margin-top:6px;"><span>Solde en fin de mois</span><span class="num">'+money(toE(finC))+'</span></div>';
   h+='<div style="display:flex;justify-content:space-between;gap:20px;margin-top:26px;font-size:12px;color:var(--ink2);"><span>Signature :</span><span style="flex:1;border-bottom:1px solid rgba(0,0,0,.35);"></span></div>';
   h+='</div>';
-  h+='<button class="btn btn-primary btn-lg full no-print" data-act="doPrint">🖨️ Imprimer / PDF</button>';
-  h+='<p class="field-hint no-print" style="text-align:center;">Sur iPhone : si rien ne s\'ouvre, ouvre l\'appli dans Safari puis Partager → Imprimer.</p>';
+  var standalone=false;try{standalone=(navigator.standalone===true)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches);}catch(e){}
+  if(standalone){
+    var purl=(ro?("vue.html?c="+encodeURIComponent(state.code||"")+"&"):"index.html?")+"print="+mo;
+    h+='<a class="btn btn-primary btn-lg full no-print" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px;" href="'+purl+'" target="_blank" rel="noopener">🖨️ Ouvrir dans Safari pour imprimer</a>';
+    h+='<p class="field-hint no-print" style="text-align:center;">La feuille s\'ouvre dans Safari : bouton Partager → Imprimer (ou Enregistrer en PDF).</p>';
+  }else{
+    h+='<button class="btn btn-primary btn-lg full no-print" data-act="doPrint">🖨️ Imprimer / PDF</button>';
+  }
   h+='<button class="link-row no-print" data-act="nav" data-arg="registre">'+ic("chevron")+' Retour au registre</button>';
   h+='</div>';
   return h;
@@ -1471,6 +1477,8 @@ function start(){
   else{state.code=lget(CK,"");}
   if(state.code)loadCache();
   if(!state.readOnly && /^#(scan|reglages|settings)/i.test(location.hash||"")) state.view="settings";
+  var pmo=getParam("print");
+  if(pmo&&/^\d{4}-\d{2}$/.test(pmo)){state.printMois=pmo;state.view="print";}
   state.ready=true;
   render();
   if(!state.readOnly && /scan/i.test(location.hash||"")) setTimeout(function(){var el=document.getElementById("set_visionkey");if(el&&el.scrollIntoView){try{el.scrollIntoView({block:"center"});}catch(e){}}},350);
