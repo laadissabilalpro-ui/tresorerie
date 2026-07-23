@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: ticket-detail-ia-2026-07 */
+   build: feuille-caisse-2026-07 */
 (function(){
 "use strict";
 
@@ -349,7 +349,7 @@ var state={
   code:lget("treso:code",""),
   readOnly:false,
   settings:null, movements:[], debts:[], jours:{}, joursDirty:{},
-  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{}, ticketView:null, ocrTicket:null,
+  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{}, ticketView:null, ocrTicket:null, printMois:null, printPick:false,
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 var RESERVE_MARK="__RESERVE_PERSO__";
@@ -419,7 +419,7 @@ function render(){
     if(!navigator.onLine){app.innerHTML=state.readOnly?msgScreen("Hors-ligne","Connecte-toi à internet pour afficher les données partagées."):viewOnbSettings();return;}
     app.innerHTML=state.readOnly?msgScreen("Aucune donnée","Aucune donnée n'est encore partagée pour ce code de consultation."):viewOnbSettings();return;
   }
-  if(state.readOnly && state.view!=="perso" && state.view!=="stock") state.view="registre"; // registre + pages perso/stock accessibles
+  if(state.readOnly && state.view!=="perso" && state.view!=="stock" && state.view!=="print") state.view="registre"; // registre + pages perso/stock/print accessibles
   else if(state.view==="add"||state.view==="settings"){} // ok
   var html=header();
   html+='<main class="content">';
@@ -428,15 +428,17 @@ function render(){
   else if(state.view==="movements")html+=viewMovements();
   else if(state.view==="resume")html+=viewResume();
   else if(state.view==="registre")html+=viewRegistre();
+  else if(state.view==="print")html+=viewPrint();
   else if(state.view==="perso")html+=viewPerso();
   else if(state.view==="stock")html+=viewStock();
   else if(state.view==="settings")html+=viewSettings();
   else html+=viewHome();
   html+="</main>";
-  if(!state.readOnly && state.view!=="add" && state.view!=="settings")html+=bottomNav();
+  if(!state.readOnly && state.view!=="add" && state.view!=="settings" && state.view!=="print")html+=bottomNav();
   if(state.confirm)html+=confirmModal();
   if(state.modal)html+=modalInput();
   if(state.ticketView)html+=ticketModal();
+  if(state.printPick)html+=printPickModal();
   app.innerHTML=html;
   if(!state.readOnly && state.view==="add"){var mi=document.getElementById("montant");if(mi)setTimeout(function(){try{mi.focus();}catch(e){}},120);}
   if(state.modal){var f0=document.getElementById(state.modal.fields[0].id);if(f0)setTimeout(function(){try{f0.focus();}catch(e){}},120);}
@@ -444,8 +446,8 @@ function render(){
 }
 
 function header(){
-  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",stock:"Stock",settings:"Réglages"};
-  var showBack=(!state.readOnly)&&(state.view==="add"||state.view==="settings");
+  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",stock:"Stock",settings:"Réglages",print:"Feuille de caisse"};
+  var showBack=(!state.readOnly)&&(state.view==="add"||state.view==="settings"||state.view==="print");
   var left=showBack?'<button class="icon-btn" data-act="back" aria-label="Retour">'+ic("home")+'</button>':'<div class="header-brand"><span class="brand-dot"></span></div>';
   var right;
   if(state.readOnly)right=syncBadgeHTML()+'<span class="ro-badge">Consultation</span>';
@@ -747,7 +749,7 @@ function chartHTML(rows){
   return s;
 }
 function fmtCell(c){return c?formatNum(toE(c)):"";}
-function ledgerTableHTML(L,ro,moisMap){
+function ledgerTableHTML(L,ro,moisMap,noFold){
   var st='<style>'
     +'table.ledger{width:100%;border-collapse:collapse;font-size:14px;min-width:460px;}'
     +'table.ledger th{font-size:11.5px;color:var(--ink2);font-weight:600;text-align:left;padding:8px 8px;border-bottom:0.5px solid var(--line);}'
@@ -773,9 +775,9 @@ function ledgerTableHTML(L,ro,moisMap){
   h+='<tr class="tot"><td>Total</td><td></td><td></td><td class="r solde">'+formatNum(toE(L.openC))+'</td></tr>';
   var curMo=today().slice(0,7);
   L.days.forEach(function(d,idx){
-    var moF=d.date.slice(0,7),isCurMo=(moF===curMo),moOpen=isCurMo||(state.regMoisOpen&&state.regMoisOpen[moF]);
+    var moF=d.date.slice(0,7),isCurMo=(moF===curMo),moOpen=noFold||isCurMo||(state.regMoisOpen&&state.regMoisOpen[moF]);
     var firstOfMo=(idx===0)||(L.days[idx-1].date.slice(0,7)!==moF);
-    if(firstOfMo&&!isCurMo){
+    if(firstOfMo&&!isCurMo&&!noFold){
       var tmF=moisMap&&moisMap[moF];
       if(moOpen)h+='<tr class="mois-fold" data-act="regToggleMois" data-arg="'+moF+'"><td colspan="4"><div class="mf-line"><span class="mf-nom">▾ '+nomMois(moF)+'</span><span class="mf-info">replier</span></div></td></tr>';
       else h+='<tr class="mois-fold" data-act="regToggleMois" data-arg="'+moF+'"><td colspan="4"><div class="mf-line"><span class="mf-nom">▸ '+nomMois(moF)+'</span><span class="mf-info">'+(tmF?('Ventes '+formatCompact(toE(tmF.total))+' € · '):'')+'toucher pour ouvrir</span></div></td></tr>';
@@ -852,6 +854,7 @@ function viewRegistre(){
     });
     h+='</div>';
   }
+  if(moisKeys.length)h+='<button class="link-row" data-act="printPick">🖨️ Imprimer une feuille de caisse '+ic("chevron")+'</button>';
   h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro,moisMap)+'</div>';
   h+=dettesPanelHTML(debts,ro);
   h+='</div>';
@@ -927,6 +930,49 @@ function ticketModal(){
   h+='<div style="display:flex;justify-content:space-between;font-size:15px;font-weight:800;padding:8px 0;border-top:1.5px solid var(--line);"><span>Total payé</span><span class="num">'+formatNum(m.montant)+' €</span></div>';
   h+='<div class="modal-actions" style="margin-top:10px;"><button class="btn btn-ghost" data-act="ticketCloseBtn">Fermer</button><button class="btn btn-primary" data-act="ticketEdit" data-arg="'+m.id+'">Modifier</button></div>';
   h+='</div></div>';
+  return h;
+}
+function moisDisponibles(){
+  var movs=activeMovs(),set={};
+  movs.forEach(function(m){set[m.date.slice(0,7)]=1;});
+  var s=state.settings;if(s&&s.dateInit)set[(s.dateInit||"").slice(0,7)]=1;
+  return Object.keys(set).filter(Boolean).sort().reverse();
+}
+function printPickModal(){
+  var mois=moisDisponibles();
+  var h='<div class="overlay" data-act="printPickClose"><div class="modal" data-stop="1"><p class="modal-msg">🖨️ Imprimer quel mois ?</p><div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;max-height:50vh;overflow-y:auto;">';
+  mois.forEach(function(mo){h+='<button class="btn btn-secondary full" data-act="printMois" data-arg="'+mo+'">'+nomMois(mo)+'</button>';});
+  h+='</div><div class="modal-actions" style="margin-top:12px;"><button class="btn btn-ghost full" data-act="printPickCloseBtn">Annuler</button></div></div></div>';
+  return h;
+}
+function viewPrint(){
+  var s=state.settings,movs=activeMovs(),debts=activeDebts(),ro=state.readOnly;
+  var mo=state.printMois||today().slice(0,7);
+  var L=buildLedger(s,movs,debts,state.jours);
+  var daysMo=L.days.filter(function(d){return d.date.slice(0,7)===mo;});
+  var reportC=L.openC;
+  for(var i=0;i<L.days.length;i++){if(L.days[i].date.slice(0,7)<mo)reportC=L.days[i].soldeC;else break;}
+  var finC=daysMo.length?daysMo[daysMo.length-1].soldeC:reportC;
+  var map={};movs.forEach(function(m){if(m.date.slice(0,7)===mo)(map[m.date]=map[m.date]||[]).push(m);});
+  var tm={especes:0,ca:0,revolut:0,total:0};
+  Object.keys(map).forEach(function(k){var c=caJourC(map[k]);tm.especes+=c.especes;tm.ca+=c.ca;tm.revolut+=c.revolut;tm.total+=c.total;});
+  var moInit=(s.dateInit||today()).slice(0,7),si=s.soldesInit||{};
+  if(moInit===mo){var siT=toC(si.especes)+toC(si.ca)+toC(si.revolut);tm.especes+=toC(si.especes);tm.ca+=toC(si.ca);tm.revolut+=toC(si.revolut);tm.total+=siT;}
+  var moisMap={};moisMap[mo]=tm;
+  var Lmois={openC:reportC,openLines:[],days:daysMo,soldeC:finC};
+  var h='<div class="view print-sheet">';
+  h+='<style>@media print{.header,nav,.no-print{display:none!important}body{background:#fff!important}main.content{padding:0!important;max-width:none!important}.card{box-shadow:none!important;border:none!important;padding:0!important}table.ledger{min-width:0!important;font-size:12px!important}tr{page-break-inside:avoid}.print-sheet .view{gap:6px}}</style>';
+  h+='<div class="card" style="padding:14px 12px;">';
+  h+='<div style="text-align:center;margin-bottom:4px;"><div style="font-size:19px;font-weight:800;">D\'Or Blanc — Feuille de caisse</div><div style="font-size:14px;font-weight:700;margin-top:2px;">'+nomMois(mo)+'</div><div style="font-size:11.5px;color:var(--ink2);margin-top:2px;">Éditée le '+frDate(today())+'</div></div>';
+  if(!daysMo.length)h+='<p class="muted" style="padding:10px 0;">Aucun mouvement ce mois-là.</p>';
+  else h+='<div style="overflow-x:auto;">'+ledgerTableHTML(Lmois,ro,moisMap,true)+'</div>';
+  h+='<div style="display:flex;justify-content:space-between;font-size:14px;font-weight:800;padding:9px 2px;border-top:2px solid var(--accent);margin-top:6px;"><span>Solde en fin de mois</span><span class="num">'+money(toE(finC))+'</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;gap:20px;margin-top:26px;font-size:12px;color:var(--ink2);"><span>Signature :</span><span style="flex:1;border-bottom:1px solid rgba(0,0,0,.35);"></span></div>';
+  h+='</div>';
+  h+='<button class="btn btn-primary btn-lg full no-print" data-act="doPrint">🖨️ Imprimer / PDF</button>';
+  h+='<p class="field-hint no-print" style="text-align:center;">Sur iPhone : si rien ne s\'ouvre, ouvre l\'appli dans Safari puis Partager → Imprimer.</p>';
+  h+='<button class="link-row no-print" data-act="nav" data-arg="registre">'+ic("chevron")+' Retour au registre</button>';
+  h+='</div>';
   return h;
 }
 function modalInput(){
@@ -1344,7 +1390,7 @@ document.addEventListener("click",function(ev){
   if(el.getAttribute("data-stop"))ev.stopPropagation();
 
   if(state.readOnly){
-    var ok={retrySync:1,onbCode:1,stockRefresh:1,regToggleMois:1};
+    var ok={retrySync:1,onbCode:1,stockRefresh:1,regToggleMois:1,printPick:1,printPickClose:1,printPickCloseBtn:1,printMois:1,doPrint:1};
     var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"||arg==="stock"));
     if(!ok[act]&&!navOk)return;
   }
@@ -1352,10 +1398,15 @@ document.addEventListener("click",function(ev){
   if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();if(arg==="movements")state.movDay=today();if(arg==="stock"){fetchStock();return;}render();return;}
   if(act==="stockRefresh"){fetchStock();return;}
   if(act==="regToggleMois"){state.regMoisOpen=state.regMoisOpen||{};state.regMoisOpen[arg]=!state.regMoisOpen[arg];render();return;}
+  if(act==="printPick"){state.printPick=true;render();return;}
+  if(act==="printPickClose"){if(ev.target===el){state.printPick=false;render();}return;}
+  if(act==="printPickCloseBtn"){state.printPick=false;render();return;}
+  if(act==="printMois"){state.printPick=false;state.printMois=arg;state.view="print";render();window.scrollTo(0,0);return;}
+  if(act==="doPrint"){try{window.print();}catch(e){showToast("Impression indisponible ici — ouvre dans Safari/Chrome");}return;}
   if(act==="movDayShift"){var d0=state.movDay||today();var dd=new Date(d0+"T12:00:00");dd.setDate(dd.getDate()+(+arg));var nd=dateKey(dd);if(nd>today())nd=today();state.movDay=nd;render();return;}
   if(act==="movToday"){state.movDay=today();render();return;}
   if(act==="settings"){state.view="settings";render();return;}
-  if(act==="back"){state.editId=null;state.form=null;state.view="home";render();return;}
+  if(act==="back"){var wasPrint=state.view==="print";state.editId=null;state.form=null;state.view=wasPrint?"registre":"home";render();return;}
   if(act==="add"){openAdd();return;}
   if(act==="quick"){openAdd({type:"VENTE",compte:arg});return;}
   if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if(arg==="TRANSFERT"){if(!state.form.nature)state.form.nature="S";if(!state.form.src)state.form.src="especes";if(!state.form.dst||state.form.dst===state.form.src)state.form.dst=(state.form.src==="especes"?"ca":"especes");}else if((arg==="PERSO"||arg==="RETRAIT")){if(state.form.compte==="ca"||ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";}else if((arg==="VENTE"||arg==="REMB")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
