@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: ventes-categorie-2026-07 */
+   build: print-go-totaux-2026-07 */
 (function(){
 "use strict";
 
@@ -502,13 +502,27 @@ function fetchVentesJour(mo){
     .then(function(j){if(j&&j.success!==false&&j.jours){state.ventesJour[mo]=j.jours;state.ventesJourSt[mo]="ok";render();}else{state.ventesJourSt[mo]="err";}})
     .catch(function(){state.ventesJourSt[mo]="err";});
 }
-function ventesJourTxt(k){
-  var mo=k.slice(0,7),vj=state.ventesJour[mo],v=vj?vj[k]:null;
+function ventesTxtFromObj(v){
   if(!v)return "";
   var parts=[];
   var seg=function(n,sing,plur){n=+n||0;if(n>0)parts.push(n+" "+(n>1?plur:sing));};
   seg(v.Parfums,"parfum","parfums");seg(v.Sprays,"spray","sprays");seg(v.Gold,"gold","gold");seg(v.Autres,"autre","autres");
   return parts.join(" · ");
+}
+function ventesJourTxt(k){
+  var mo=k.slice(0,7),vj=state.ventesJour[mo];
+  return ventesTxtFromObj(vj?vj[k]:null);
+}
+function ventesMoisTxt(mo){
+  var vj=state.ventesJour[mo];
+  if(!vj)return "";
+  var s={Parfums:0,Sprays:0,Gold:0,Autres:0};
+  Object.keys(vj).forEach(function(k){var v=vj[k]||{};s.Parfums+=+v.Parfums||0;s.Sprays+=+v.Sprays||0;s.Gold+=+v.Gold||0;s.Autres+=+v.Autres||0;});
+  return ventesTxtFromObj(s);
+}
+function ventesMoisRecapHTML(mo){
+  var x=ventesMoisTxt(mo);
+  return x?'<div style="font-size:10.5px;font-weight:700;color:var(--ink2);margin-top:3px;">🧴 '+x+' vendus</div>':'';
 }
 function fmtStockDate(iso){try{var d=new Date(iso);if(isNaN(d.getTime()))return String(iso);return d.toLocaleString("fr-FR",{timeZone:"Indian/Reunion",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}).replace(", "," à ");}catch(e){return String(iso);}}
 function fetchStock(){
@@ -808,7 +822,7 @@ function ledgerTableHTML(L,ro,moisMap,noFold){
     var mo=d.date.slice(0,7);
     if(moisMap&&moisMap[mo]&&((idx===L.days.length-1)||(L.days[idx+1].date.slice(0,7)!==mo))){var tm=moisMap[mo];
       var seg=function(lbl,c){return '<span style="white-space:nowrap;">'+lbl+' '+formatCompact(toE(c))+' €</span>';};
-      h+='<tr class="moisrecap"><td colspan="4"><div style="white-space:nowrap;font-size:12px;"><span style="white-space:nowrap;">Total '+nomMois(mo)+'</span> : <span style="white-space:nowrap;font-weight:800;">'+formatCompact(toE(tm.total))+' €</span></div><div style="font-size:10.5px;font-weight:600;color:var(--ink2);margin-top:3px;line-height:1.7;letter-spacing:-.2px;">'+seg("Espèces",tm.especes)+' · '+seg("CB",tm.ca)+' · '+seg("Revolut",tm.revolut)+'</div></td></tr>';}
+      h+='<tr class="moisrecap"><td colspan="4"><div style="white-space:nowrap;font-size:12px;"><span style="white-space:nowrap;">Total '+nomMois(mo)+'</span> : <span style="white-space:nowrap;font-weight:800;">'+formatCompact(toE(tm.total))+' €</span></div><div style="font-size:10.5px;font-weight:600;color:var(--ink2);margin-top:3px;line-height:1.7;letter-spacing:-.2px;">'+seg("Espèces",tm.especes)+' · '+seg("CB",tm.ca)+' · '+seg("Revolut",tm.revolut)+'</div>'+ventesMoisRecapHTML(mo)+'</td></tr>';}
   });
   h+='</tbody></table>';
   return h;
@@ -994,9 +1008,9 @@ function viewPrint(){
   h+='</div>';
   var standalone=false;try{standalone=(navigator.standalone===true)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches);}catch(e){}
   if(standalone){
-    var purl=(ro?("vue.html?c="+encodeURIComponent(state.code||"")+"&"):"index.html?")+"print="+mo;
+    var purl=(ro?("vue.html?c="+encodeURIComponent(state.code||"")+"&"):"index.html?")+"print="+mo+"&go=1";
     h+='<a class="btn btn-primary btn-lg full no-print" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px;" href="'+purl+'" target="_blank" rel="noopener">🖨️ Ouvrir dans Safari pour imprimer</a>';
-    h+='<p class="field-hint no-print" style="text-align:center;">La feuille s\'ouvre dans Safari : bouton Partager → Imprimer (ou Enregistrer en PDF).</p>';
+    h+='<p class="field-hint no-print" style="text-align:center;">Un écran blanc peut apparaître un instant : c\'est Safari qui s\'ouvre. L\'impression se lance ensuite toute seule (sinon : Partager → Imprimer).</p>';
   }else{
     h+='<button class="btn btn-primary btn-lg full no-print" data-act="doPrint">🖨️ Imprimer / PDF</button>';
   }
@@ -1501,7 +1515,20 @@ function start(){
   if(state.code)loadCache();
   if(!state.readOnly && /^#(scan|reglages|settings)/i.test(location.hash||"")) state.view="settings";
   var pmo=getParam("print");
-  if(pmo&&/^\d{4}-\d{2}$/.test(pmo)){state.printMois=pmo;state.view="print";}
+  if(pmo&&/^\d{4}-\d{2}$/.test(pmo)){
+    state.printMois=pmo;state.view="print";
+    var isStandalone=false;try{isStandalone=(navigator.standalone===true)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches);}catch(e){}
+    if(getParam("go")==="1"&&!isStandalone){
+      // Ouvert depuis l'app installée : lancer l'impression tout seul dès que la feuille est prête (ventes chargées ou timeout)
+      var t0=Date.now();
+      var waitPrint=function(){
+        var st=state.ventesJourSt[pmo];
+        if(st==="ok"||st==="err"||Date.now()-t0>3000){setTimeout(function(){try{window.print();}catch(e){}},300);}
+        else setTimeout(waitPrint,200);
+      };
+      setTimeout(waitPrint,500);
+    }
+  }
   state.ready=true;
   render();
   if(!state.readOnly && /scan/i.test(location.hash||"")) setTimeout(function(){var el=document.getElementById("set_visionkey");if(el&&el.scrollIntoView){try{el.scrollIntoView({block:"center"});}catch(e){}}},350);
