@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: print-go-totaux-2026-07 */
+   build: fix-sync-transferts-2026-07 */
 (function(){
 "use strict";
 
@@ -31,7 +31,11 @@ function parseTransfert(m){
   var p=raw.split("|");
   return {nature:(p[1]==="R"?"R":(p[1]==="P"?"P":"S")),src:p[2]||"especes",dst:p[3]||"ca",label:p.slice(4).join("|")||""};
 }
-function isTransfert(m){return m&&m.type==="TRANSFERT";}
+/* ⚠️ Un transfert est reconnu à sa NOTE (« T|nature|src|dst|… »), pas à son type :
+   la base n'accepte que les 5 types d'origine (contrainte treso_mouvements_type_check),
+   donc les transferts sont stockés avec un type autorisé (TRANSFERT_DB) et se synchronisent. */
+var TRANSFERT_DB="CHARGE";
+function isTransfert(m){return !!(m&&(m.type==="TRANSFERT"||(typeof m.note==="string"&&/^T\|[SRP]\|/.test(m.note))));}
 
 /* ===================== HELPERS ARGENT (centimes) ===================== */
 function toC(n){return Math.round((Number(n)||0)*100);}
@@ -80,9 +84,9 @@ function getParam(name){ try{var u=new URL(window.location.href);return u.search
 function effectsC(movs){
   var e={especes:0,ca:0,revolut:0};
   for(var i=0;i<movs.length;i++){var m=movs[i],a=toC(m.montant);
-    if(m.type==="VENTE")e[m.compte]+=a;
+    if(isTransfert(m)){var tr=parseTransfert(m);if(tr.nature==="S"){if(e[tr.src]!=null)e[tr.src]-=a;if(e[tr.dst]!=null)e[tr.dst]+=a;}else if(tr.nature==="R"){if(e[tr.dst]!=null)e[tr.dst]+=a;}/* nature P (perso↔perso) : aucun effet business */}
+    else if(m.type==="VENTE")e[m.compte]+=a;
     else if(m.type==="REMISE"){e.especes-=a;e.ca+=a;}
-    else if(m.type==="TRANSFERT"){var tr=parseTransfert(m);if(tr.nature==="S"){if(e[tr.src]!=null)e[tr.src]-=a;if(e[tr.dst]!=null)e[tr.dst]+=a;}else if(tr.nature==="R"){if(e[tr.dst]!=null)e[tr.dst]+=a;}/* nature P (perso↔perso) : aucun effet business */}
     else e[m.compte]-=a;}
   return e;
 }
@@ -92,9 +96,9 @@ function dispoAcctC(balC,acct,s){if(acct==="especes")return balC.especes-toC(s.f
 function deltasForAccount(dayMovs,acct){
   var arr=[];
   for(var i=0;i<dayMovs.length;i++){var m=dayMovs[i],a=toC(m.montant);
-    if(m.type==="VENTE"&&m.compte===acct)arr.push(a);
+    if(isTransfert(m)){var tr=parseTransfert(m);if(tr.nature==="S"){if(tr.src===acct)arr.push(-a);else if(tr.dst===acct)arr.push(a);}else if(tr.nature==="R"&&tr.dst===acct)arr.push(a);}
+    else if(m.type==="VENTE"&&m.compte===acct)arr.push(a);
     else if(m.type==="REMISE"){if(acct==="especes")arr.push(-a);else if(acct==="ca")arr.push(a);}
-    else if(m.type==="TRANSFERT"){var tr=parseTransfert(m);if(tr.nature==="S"){if(tr.src===acct)arr.push(-a);else if(tr.dst===acct)arr.push(a);}else if(tr.nature==="R"&&tr.dst===acct)arr.push(a);}
     else if((m.type==="ACHAT"||m.type==="CHARGE"||m.type==="RETRAIT")&&m.compte===acct)arr.push(-a);
   }
   return arr;
@@ -142,7 +146,7 @@ function buildResumeMentor(s,allMovs,k){
   L.push("CB Crédit Agricole : "+eurC(toE(ca.ca)));
   L.push("Revolut : "+eurC(toE(ca.revolut)));
   L.push("Total : "+eurC(toE(ca.total)));
-  var sorties=d.dayMovs.filter(function(m){return m.type==="ACHAT"||m.type==="CHARGE"||m.type==="RETRAIT";});
+  var sorties=d.dayMovs.filter(function(m){return !isTransfert(m)&&(m.type==="ACHAT"||m.type==="CHARGE"||m.type==="RETRAIT");});
   L.push("Sorties du jour");
   if(!sorties.length){L.push("Aucune sortie.");}
   else{
@@ -188,18 +192,16 @@ function buildLedger(s, movs, debts, jours){
     if(k===0 && fondC!==0) lines.push({label:"Espèces",sub:"Fond de caisse",recetteC:0,debitC:fondC});
     for(var j=0;j<dmovs.length;j++){
       var m=dmovs[j],a=toC(m.montant),cn=COMPTES[m.compte].nom;
-      if(m.type==="VENTE") lines.push({label:cn,sub:"Vente"+(m.note?" — "+m.note:""),recetteC:a,debitC:0});
+      if(isTransfert(m)){
+        var trL=parseTransfert(m),snL=(COMPTES[trL.src]||{}).nom||trL.src,dnL=(COMPTES[trL.dst]||{}).nom||trL.dst;
+        if(trL.nature==="P"){/* perso↔perso : hors business, aucune ligne */}
+        else if(trL.nature==="R"){lines.push({label:dnL,sub:"⚖️ Rééquilibrage — couvert avec argent perso"+(trL.label?" · "+trL.label:""),recetteC:a,debitC:0});}
+        else{lines.push({label:snL,sub:"🔄 Transfert → "+dnL+(trL.label?" · "+trL.label:""),recetteC:0,debitC:a});lines.push({label:dnL,sub:"🔄 Reçu de "+snL,recetteC:a,debitC:0});}
+      }
+      else if(m.type==="VENTE") lines.push({label:cn,sub:"Vente"+(m.note?" — "+m.note:""),recetteC:a,debitC:0});
       else if(m.type==="REMISE"){
         lines.push({label:"Espèces",sub:"Remise vers la banque",recetteC:0,debitC:a});
         lines.push({label:"Crédit Agricole",sub:"Remise reçue",recetteC:a,debitC:0});
-      } else if(m.type==="TRANSFERT"){
-        var tr=parseTransfert(m),sn=(COMPTES[tr.src]||{}).nom||tr.src,dn=(COMPTES[tr.dst]||{}).nom||tr.dst;
-        if(tr.nature==="R"){
-          lines.push({label:dn,sub:"⚖️ Rééquilibrage — couvert avec argent perso"+(tr.label?" · "+tr.label:""),recetteC:a,debitC:0});
-        } else {
-          lines.push({label:sn,sub:"🔄 Transfert → "+dn+(tr.label?" · "+tr.label:""),recetteC:0,debitC:a});
-          lines.push({label:dn,sub:"🔄 Reçu de "+sn,recetteC:a,debitC:0});
-        }
       } else { var subL; if(m.note===RESERVE_MARK){subL="Retrait perso";} else if(m.note&&m.note.indexOf("Paiement dette")===0){subL=m.note;} else {subL=TYPES[m.type].label+(m.note?" — "+m.note:"");} lines.push({label:cn,sub:subL,recetteC:0,debitC:a}); }
     }
     var rec=0,deb=0;
@@ -225,6 +227,17 @@ function loadCache(){
       state.joursDirty=o.joursDirty||{};
     }else{state.settings=null;state.movements=[];state.debts=[];state.jours={};state.joursDirty={};}
   }catch(e){state.settings=null;state.movements=[];state.debts=[];state.jours={};state.joursDirty={};}
+  migrateTransferts();
+}
+/* Les transferts créés avec type "TRANSFERT" étaient REFUSÉS par la base (contrainte de type) :
+   ils sont restés bloqués en local. On les repasse sur un type autorisé + _dirty → ils partent à la prochaine synchro. */
+function migrateTransferts(){
+  var n=0;
+  for(var i=0;i<state.movements.length;i++){var m=state.movements[i];
+    if(m&&m.type==="TRANSFERT"){m.type=TRANSFERT_DB;m._dirty=true;n++;}
+  }
+  if(n){saveCache();}
+  return n;
 }
 function saveCache(){try{lset("treso:cache:"+state.code,JSON.stringify({settings:state.settings,movements:state.movements,debts:state.debts,jours:state.jours,joursDirty:state.joursDirty}));}catch(e){}}
 
@@ -737,7 +750,7 @@ function viewMovements(){
   }else{
     h+='<div class="mov-list">';
     for(var i=0;i<tmovs.length;i++){var m=tmovs[i];
-      var vente=m.type==="VENTE",remise=m.type==="REMISE",transf=m.type==="TRANSFERT";
+      var transf=isTransfert(m),vente=!transf&&m.type==="VENTE",remise=!transf&&m.type==="REMISE";
       var cls=vente?"pos":(remise||transf?"tr":"out"),sign=vente?"+":(remise||transf?"":"-");
       var typeLbl=TYPES[m.type].label,sub;
       if(transf){var tr=parseTransfert(m),sn=(COMPTES[tr.src]||{}).nom||tr.src,dn=(COMPTES[tr.dst]||{}).nom||tr.dst;typeLbl=tr.nature==="R"?"⚖️ Rééquilibrage":"🔄 Transfert";sub=(tr.nature==="R"?"Argent perso → "+dn:sn+" → "+dn)+(tr.label?" · "+esc(tr.label):"");}
@@ -1080,7 +1093,7 @@ function buildMovFromForm(){
   if(f.type==="TRANSFERT"){
     var mtt=round2(parseMontant(f.montant));
     var note="T|"+(f.nature==="R"?"R":(f.nature==="P"?"P":"S"))+"|"+(f.src||"especes")+"|"+(f.dst||"revolut")+"|"+((f.note||"").trim());
-    return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"TRANSFERT",compte:f.src||"especes",montant:mtt,note:note,_dirty:true};
+    return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:TRANSFERT_DB,compte:f.src||"especes",montant:mtt,note:note,_dirty:true};
   }
   var montant=round2(parseMontant(f.montant));
   return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:f.type,compte:f.type==="REMISE"?"especes":f.compte,montant:montant,note:(f.note||"").trim(),_dirty:true};
@@ -1119,9 +1132,9 @@ function submitMov(){
   }
   var m=buildMovFromForm();
   if(f.type==="PERSO"&&state.ocrTicket){m.note=(m.note||"")+" ⟦"+JSON.stringify(state.ocrTicket)+"⟧";}
-  if(m.type==="TRANSFERT"){var trv=parseTransfert(m);if(trv.src===trv.dst){showToast("Choisis deux comptes différents");return;}}
+  if(isTransfert(m)){var trv=parseTransfert(m);if(trv.src===trv.dst){showToast("Choisis deux comptes différents");return;}}
   var debit=null;
-  if(m.type==="REMISE")debit="especes";else if(m.type==="TRANSFERT"){var trg=parseTransfert(m);debit=(trg.nature==="S")?trg.src:null;}else if(m.type!=="VENTE")debit=m.compte;
+  if(isTransfert(m)){var trg=parseTransfert(m);debit=(trg.nature==="S")?trg.src:null;}else if(m.type==="REMISE")debit="especes";else if(m.type!=="VENTE")debit=m.compte;
   if(debit){
     var others=activeMovs().filter(function(x){return x.id!==m.id;});
     var bal=balancesC(state.settings,others.concat([m]));
@@ -1473,7 +1486,7 @@ document.addEventListener("click",function(ev){
   if(act==="ticketClose"){if(ev.target===el){state.ticketView=null;render();}return;}
   if(act==="ticketCloseBtn"){state.ticketView=null;render();return;}
   if(act==="ticketEdit"){state.ticketView=null;var mm=findMov(arg);if(mm){state.editId=arg;state.ocrTicket=ticketOf(mm.note);state.ocrInfo=null;state.ocrDate=null;state.form={type:"PERSO",compte:(mm.compte==="ca"?"especes":mm.compte),montant:String(mm.montant).replace(".",","),note:stripTicket(mm.note).replace(/^Perso · /,"")};state.view="add";}render();return;}
-  if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;state.ocrTicket=ticketOf(m.note);state.ocrInfo=null;state.ocrDate=null;if(m.type==="TRANSFERT"){var trE=parseTransfert(m);state.form={type:"TRANSFERT",nature:trE.nature,src:trE.src,dst:trE.dst,montant:String(m.montant).replace(".",","),note:trE.label||""};}else if(isPersoDep(m)){state.form={type:"PERSO",compte:(m.compte==="ca"?"especes":m.compte),montant:String(m.montant).replace(".",","),note:stripTicket(m.note).replace(/^Perso · /,"")};}else{state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};}state.view="add";render();}return;}
+  if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;state.ocrTicket=ticketOf(m.note);state.ocrInfo=null;state.ocrDate=null;if(isTransfert(m)){var trE=parseTransfert(m);state.form={type:"TRANSFERT",nature:trE.nature,src:trE.src,dst:trE.dst,montant:String(m.montant).replace(".",","),note:trE.label||""};}else if(isPersoDep(m)){state.form={type:"PERSO",compte:(m.compte==="ca"?"especes":m.compte),montant:String(m.montant).replace(".",","),note:stripTicket(m.note).replace(/^Perso · /,"")};}else{state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};}state.view="add";render();}return;}
   if(act==="delMov"){deleteMov(arg);return;}
   if(act==="editMarge"){editMarge(arg);return;}
   if(act==="addDette"){addDette();return;}
