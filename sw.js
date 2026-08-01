@@ -2,7 +2,7 @@
    Mise à jour automatique fiable : "réseau d'abord" qui CONTOURNE le cache HTTP (cache:"reload")
    pour la navigation et app.js/styles.css/manifest → toujours la dernière version en ligne.
    Repli sur le cache uniquement hors-ligne. */
-const CACHE = "treso-v4";
+const CACHE = "treso-v5";
 const CORE = ["./", "./index.html", "./vue.html", "./styles.css", "./app.js", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 const CDN = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js";
 

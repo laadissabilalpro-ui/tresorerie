@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: fix-sync-transferts-2026-07 */
+   build: fix-sync-transferts-2026-08 */
 (function(){
 "use strict";
 
@@ -236,7 +236,7 @@ function migrateTransferts(){
   for(var i=0;i<state.movements.length;i++){var m=state.movements[i];
     if(m&&m.type==="TRANSFERT"){m.type=TRANSFERT_DB;m._dirty=true;n++;}
   }
-  if(n){saveCache();}
+  if(n){state.migTransferts=(state.migTransferts||0)+n;saveCache();}
   return n;
 }
 function saveCache(){try{lset("treso:cache:"+state.code,JSON.stringify({settings:state.settings,movements:state.movements,debts:state.debts,jours:state.jours,joursDirty:state.joursDirty}));}catch(e){}}
@@ -321,7 +321,12 @@ async function pull(c){
 async function sync(){
   if(!state.code){updateSyncBadge();return;}
   if(!navigator.onLine){updateSyncBadge();return;}
-  try{var c=client();await pushAll(c);await pull(c);saveCache();}
+  try{var c=client();await pushAll(c);await pull(c);saveCache();
+    if(state.migTransferts){
+      var reste=state.movements.filter(function(m){return m._dirty&&!m._deleted&&isTransfert(m);}).length;
+      if(!reste){var nm=state.migTransferts;state.migTransferts=0;saveCache();showToast("♻️ "+nm+" transfert"+(nm>1?"s":"")+" récupéré"+(nm>1?"s":"")+" et synchronisé"+(nm>1?"s":""));}
+    }
+  }
   catch(e){console.warn("sync",e);}
   state.firstSyncDone=true;
   updateSyncBadge();
