@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: fix-sync-transferts-2026-08 */
+   build: profil-sans-stock-2026-08 */
 (function(){
 "use strict";
 
@@ -437,7 +437,8 @@ function render(){
     if(!navigator.onLine){app.innerHTML=state.readOnly?msgScreen("Hors-ligne","Connecte-toi à internet pour afficher les données partagées."):viewOnbSettings();return;}
     app.innerHTML=state.readOnly?msgScreen("Aucune donnée","Aucune donnée n'est encore partagée pour ce code de consultation."):viewOnbSettings();return;
   }
-  if(state.readOnly && state.view!=="perso" && state.view!=="stock" && state.view!=="print") state.view="registre"; // registre + pages perso/stock/print accessibles
+  if(state.readOnly && state.view!=="perso" && !(state.view==="stock"&&hasStock()) && state.view!=="print") state.view="registre"; // registre + pages perso/print (+stock si dispo) accessibles
+  if(state.view==="stock"&&!hasStock())state.view=state.readOnly?"registre":"home";
   else if(state.view==="add"||state.view==="settings"){} // ok
   var html=header();
   html+='<main class="content">';
@@ -510,8 +511,13 @@ function viewPerso(){
   return h;
 }
 var STOCK_URL="https://dorblanc-backend-production.up.railway.app/api/stock/par-categorie";
+/* Le stock et les ventes par catégorie viennent de la caisse D'Or Blanc : réservés au dossier de Bilal (code 0000).
+   Les autres codes (ex : 0001, l'épouse) gardent toute l'interface SAUF le stock. */
+var STOCK_CODES=["0000","__regtest"];
+function hasStock(){return STOCK_CODES.indexOf(String(state.code||""))>=0;}
 var VENTES_URL="https://dorblanc-backend-production.up.railway.app/api/ventes/par-jour";
 function fetchVentesJour(mo){
+  if(!hasStock())return;
   if(!/^\d{4}-\d{2}$/.test(mo||"")||state.ventesJourSt[mo])return;
   state.ventesJourSt[mo]="loading";
   var last=new Date(+mo.slice(0,4),+mo.slice(5,7),0).getDate();
@@ -544,6 +550,7 @@ function ventesMoisRecapHTML(mo){
 }
 function fmtStockDate(iso){try{var d=new Date(iso);if(isNaN(d.getTime()))return String(iso);return d.toLocaleString("fr-FR",{timeZone:"Indian/Reunion",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}).replace(", "," à ");}catch(e){return String(iso);}}
 function fetchStock(){
+  if(!hasStock()){state.stock=null;return;}
   state.stock={status:"loading"};render();
   fetch(STOCK_URL,{cache:"no-store"})
     .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})
@@ -624,7 +631,7 @@ function viewHome(){
   var cag=persoCagnotte();
   h+='<div style="display:flex;gap:10px;margin:2px 0;">';
   h+='<button class="card" style="flex:1;border:none;text-align:center;padding:16px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;" data-act="nav" data-arg="perso"><span style="font-size:26px;line-height:1;">💰</span><span style="font-size:13px;font-weight:700;color:var(--ink);">Mon argent perso</span><span class="num" style="font-size:15px;font-weight:800;color:var(--ink);">'+money(toE(cag.soldeC))+'</span></button>';
-  h+='<button class="card" style="flex:1;border:none;text-align:center;padding:16px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;" data-act="nav" data-arg="stock"><span style="font-size:26px;line-height:1;">📦</span><span style="font-size:13px;font-weight:700;color:var(--ink);">Stock</span><span style="font-size:11.5px;color:var(--ink2);">parfums · sprays · gold</span></button>';
+  if(hasStock())h+='<button class="card" style="flex:1;border:none;text-align:center;padding:16px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;" data-act="nav" data-arg="stock"><span style="font-size:26px;line-height:1;">📦</span><span style="font-size:13px;font-weight:700;color:var(--ink);">Stock</span><span style="font-size:11.5px;color:var(--ink2);">parfums · sprays · gold</span></button>';
   h+='</div>';
   h+='<button class="link-row" data-act="nav" data-arg="registre">Voir le registre complet '+ic("chevron")+'</button>';
   h+='</div>';
@@ -891,7 +898,7 @@ function viewRegistre(){
   h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+(totalC<0?" neg":"")+'">'+money(toE(totalC))+'</p>'+decompoComptesHTML(rbal.ca,rbal.revolut,rdispoEsp)+'</div>';
   var cag=persoCagnotte();
   h+='<button class="link-row" data-act="nav" data-arg="perso"><span>💰 Argent perso : '+money(toE(cag.soldeC))+' — voir le détail</span>'+ic("chevron")+'</button>';
-  h+='<button class="link-row" data-act="nav" data-arg="stock"><span>📦 Voir le stock (parfums · sprays · gold)</span>'+ic("chevron")+'</button>';
+  if(hasStock())h+='<button class="link-row" data-act="nav" data-arg="stock"><span>📦 Voir le stock (parfums · sprays · gold)</span>'+ic("chevron")+'</button>';
   if(!ro && rows.length)h+='<div class="card"><p class="section-title flush">CA par jour</p>'+chartHTML(rows)+'</div>';
   var moisMap={};
   Object.keys(map).forEach(function(k){var mo=k.slice(0,7);var c=caJourC(map[k]);var t=moisMap[mo]||(moisMap[mo]={especes:0,ca:0,revolut:0,total:0});t.especes+=c.especes;t.ca+=c.ca;t.revolut+=c.revolut;t.total+=c.total;});
@@ -1452,11 +1459,11 @@ document.addEventListener("click",function(ev){
 
   if(state.readOnly){
     var ok={retrySync:1,onbCode:1,stockRefresh:1,regToggleMois:1,printPick:1,printPickClose:1,printPickCloseBtn:1,printMois:1,doPrint:1};
-    var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"||arg==="stock"));
+    var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"||(arg==="stock"&&hasStock())));
     if(!ok[act]&&!navOk)return;
   }
 
-  if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();if(arg==="movements")state.movDay=today();if(arg==="stock"){fetchStock();return;}render();return;}
+  if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();if(arg==="movements")state.movDay=today();if(arg==="stock"){if(!hasStock())return;fetchStock();return;}render();return;}
   if(act==="stockRefresh"){fetchStock();return;}
   if(act==="regToggleMois"){state.regMoisOpen=state.regMoisOpen||{};state.regMoisOpen[arg]=!state.regMoisOpen[arg];render();return;}
   if(act==="printPick"){state.printPick=true;render();return;}
