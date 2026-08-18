@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: profil-sans-stock-2026-08 */
+   build: sans-dettes-0001-2026-08 */
 (function(){
 "use strict";
 
@@ -515,6 +515,10 @@ var STOCK_URL="https://dorblanc-backend-production.up.railway.app/api/stock/par-
    Les autres codes (ex : 0001, l'épouse) gardent toute l'interface SAUF le stock. */
 var STOCK_CODES=["0000","__regtest"];
 function hasStock(){return STOCK_CODES.indexOf(String(state.code||""))>=0;}
+/* Panneau « Ce que je dois » masqué pour ces codes (demande Bilal 06/08 pour le dossier 0001 de son épouse).
+   Pour le réactiver : retirer le code de cette liste. */
+var DETTES_HIDDEN_CODES=["0001"];
+function hasDettes(){return DETTES_HIDDEN_CODES.indexOf(String(state.code||""))<0;}
 var VENTES_URL="https://dorblanc-backend-production.up.railway.app/api/ventes/par-jour";
 function fetchVentesJour(mo){
   if(!hasStock())return;
@@ -627,7 +631,7 @@ function viewHome(){
   }
   h+='<div class="card total-card"><p class="total-label">Total disponible</p><p class="total-amount num'+negC(totalConso)+'">'+money(toE(totalConso))+'</p>'+decompoComptesHTML(bal.ca,bal.revolut,dispoEsp)+'</div>';
   h+='<button class="link-row" data-act="openTransfert">🔄 Transfert entre comptes '+ic("chevron")+'</button>';
-  h+=dettesPanelHTML(activeDebts(),false);
+  if(hasDettes())h+=dettesPanelHTML(activeDebts(),false);
   var cag=persoCagnotte();
   h+='<div style="display:flex;gap:10px;margin:2px 0;">';
   h+='<button class="card" style="flex:1;border:none;text-align:center;padding:16px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;" data-act="nav" data-arg="perso"><span style="font-size:26px;line-height:1;">💰</span><span style="font-size:13px;font-weight:700;color:var(--ink);">Mon argent perso</span><span class="num" style="font-size:15px;font-weight:800;color:var(--ink);">'+money(toE(cag.soldeC))+'</span></button>';
@@ -917,7 +921,7 @@ function viewRegistre(){
   Object.keys(visMos).forEach(fetchVentesJour);
   if(moisKeys.length)h+='<button class="link-row" data-act="printPick">🖨️ Imprimer une feuille de caisse '+ic("chevron")+'</button>';
   h+='<div class="card" style="padding:8px 6px;overflow-x:auto;">'+ledgerTableHTML(L,ro,moisMap)+'</div>';
-  h+=dettesPanelHTML(debts,ro);
+  if(hasDettes())h+=dettesPanelHTML(debts,ro);
   h+='</div>';
   return h;
 }
