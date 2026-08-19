@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: sans-dettes-0001-2026-08 */
+   build: calendrier-2026-08 */
 (function(){
 "use strict";
 
@@ -367,7 +367,7 @@ var state={
   code:lget("treso:code",""),
   readOnly:false,
   settings:null, movements:[], debts:[], jours:{}, joursDirty:{},
-  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{}, ticketView:null, ocrTicket:null, printMois:null, printPick:false, ventesJour:{}, ventesJourSt:{},
+  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{}, ticketView:null, ocrTicket:null, printMois:null, printPick:false, calMois:null, ventesJour:{}, ventesJourSt:{},
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 var RESERVE_MARK="__RESERVE_PERSO__";
@@ -437,7 +437,7 @@ function render(){
     if(!navigator.onLine){app.innerHTML=state.readOnly?msgScreen("Hors-ligne","Connecte-toi à internet pour afficher les données partagées."):viewOnbSettings();return;}
     app.innerHTML=state.readOnly?msgScreen("Aucune donnée","Aucune donnée n'est encore partagée pour ce code de consultation."):viewOnbSettings();return;
   }
-  if(state.readOnly && state.view!=="perso" && !(state.view==="stock"&&hasStock()) && state.view!=="print") state.view="registre"; // registre + pages perso/print (+stock si dispo) accessibles
+  if(state.readOnly && state.view!=="perso" && !(state.view==="stock"&&hasStock()) && state.view!=="print" && state.view!=="calendrier") state.view="registre"; // registre + pages perso/print (+stock si dispo) accessibles
   if(state.view==="stock"&&!hasStock())state.view=state.readOnly?"registre":"home";
   else if(state.view==="add"||state.view==="settings"){} // ok
   var html=header();
@@ -448,6 +448,7 @@ function render(){
   else if(state.view==="resume")html+=viewResume();
   else if(state.view==="registre")html+=viewRegistre();
   else if(state.view==="print")html+=viewPrint();
+  else if(state.view==="calendrier")html+=viewCalendrier();
   else if(state.view==="perso")html+=viewPerso();
   else if(state.view==="stock")html+=viewStock();
   else if(state.view==="settings")html+=viewSettings();
@@ -465,7 +466,7 @@ function render(){
 }
 
 function header(){
-  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",stock:"Stock",settings:"Réglages",print:"Feuille de caisse"};
+  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",stock:"Stock",settings:"Réglages",print:"Feuille de caisse",calendrier:"Calendrier"};
   var showBack=(!state.readOnly)&&(state.view==="add"||state.view==="settings"||state.view==="print");
   var left=showBack?'<button class="icon-btn" data-act="back" aria-label="Retour">'+ic("home")+'</button>':'<div class="header-brand"><span class="brand-dot"></span></div>';
   var right;
@@ -637,6 +638,7 @@ function viewHome(){
   h+='<button class="card" style="flex:1;border:none;text-align:center;padding:16px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;" data-act="nav" data-arg="perso"><span style="font-size:26px;line-height:1;">💰</span><span style="font-size:13px;font-weight:700;color:var(--ink);">Mon argent perso</span><span class="num" style="font-size:15px;font-weight:800;color:var(--ink);">'+money(toE(cag.soldeC))+'</span></button>';
   if(hasStock())h+='<button class="card" style="flex:1;border:none;text-align:center;padding:16px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;" data-act="nav" data-arg="stock"><span style="font-size:26px;line-height:1;">📦</span><span style="font-size:13px;font-weight:700;color:var(--ink);">Stock</span><span style="font-size:11.5px;color:var(--ink2);">parfums · sprays · gold</span></button>';
   h+='</div>';
+  h+='<button class="link-row" data-act="nav" data-arg="calendrier">📅 Calendrier du mois '+ic("chevron")+'</button>';
   h+='<button class="link-row" data-act="nav" data-arg="registre">Voir le registre complet '+ic("chevron")+'</button>';
   h+='</div>';
   return h;
@@ -903,6 +905,7 @@ function viewRegistre(){
   var cag=persoCagnotte();
   h+='<button class="link-row" data-act="nav" data-arg="perso"><span>💰 Argent perso : '+money(toE(cag.soldeC))+' — voir le détail</span>'+ic("chevron")+'</button>';
   if(hasStock())h+='<button class="link-row" data-act="nav" data-arg="stock"><span>📦 Voir le stock (parfums · sprays · gold)</span>'+ic("chevron")+'</button>';
+  h+='<button class="link-row" data-act="nav" data-arg="calendrier"><span>📅 Calendrier du mois (gagné · dépensé par jour)</span>'+ic("chevron")+'</button>';
   if(!ro && rows.length)h+='<div class="card"><p class="section-title flush">CA par jour</p>'+chartHTML(rows)+'</div>';
   var moisMap={};
   Object.keys(map).forEach(function(k){var mo=k.slice(0,7);var c=caJourC(map[k]);var t=moisMap[mo]||(moisMap[mo]={especes:0,ca:0,revolut:0,total:0});t.especes+=c.especes;t.ca+=c.ca;t.revolut+=c.revolut;t.total+=c.total;});
@@ -995,6 +998,49 @@ function ticketModal(){
   h+='<div style="display:flex;justify-content:space-between;font-size:15px;font-weight:800;padding:8px 0;border-top:1.5px solid var(--line);"><span>Total payé</span><span class="num">'+formatNum(m.montant)+' €</span></div>';
   h+='<div class="modal-actions" style="margin-top:10px;"><button class="btn btn-ghost" data-act="ticketCloseBtn">Fermer</button><button class="btn btn-primary" data-act="ticketEdit" data-arg="'+m.id+'">Modifier</button></div>';
   h+='</div></div>';
+  return h;
+}
+function viewCalendrier(){
+  var ro=state.readOnly,mo=state.calMois||today().slice(0,7),curMo=today().slice(0,7);
+  var movs=activeMovs(),gains={},deps={};
+  movs.forEach(function(m){
+    if(m.date.slice(0,7)!==mo||isTransfert(m))return;
+    var a=toC(m.montant);
+    if(m.type==="VENTE")gains[m.date]=(gains[m.date]||0)+a;
+    else if(m.type==="ACHAT"||m.type==="CHARGE"||m.type==="RETRAIT")deps[m.date]=(deps[m.date]||0)+a;
+  });
+  var y=+mo.slice(0,4),mi=+mo.slice(5,7)-1;
+  var nbJours=new Date(y,mi+1,0).getDate();
+  var startCol=(new Date(y,mi,1).getDay()+6)%7; // lundi=0
+  var totG=0,totD=0;Object.keys(gains).forEach(function(k){totG+=gains[k];});Object.keys(deps).forEach(function(k){totD+=deps[k];});
+  var h='<div class="view">';
+  h+='<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:10px 12px;">';
+  h+='<button class="icon-btn" data-act="calShift" data-arg="-1" aria-label="Mois précédent" style="font-size:22px;line-height:1;">‹</button>';
+  h+='<div style="text-align:center;flex:1;"><div style="font-weight:800;font-size:16px;">'+nomMois(mo)+'</div><div style="font-size:11px;color:var(--ink2);margin-top:1px;"><span style="color:var(--greenInk);font-weight:700;">+'+formatCompact(toE(totG))+' €</span> gagnés · <span style="color:var(--red);font-weight:700;">−'+formatCompact(toE(totD))+' €</span> dépensés</div></div>';
+  h+='<button class="icon-btn" data-act="calShift" data-arg="1" aria-label="Mois suivant" style="font-size:22px;line-height:1;'+(mo>=curMo?'opacity:.25;pointer-events:none;':'')+'">›</button>';
+  h+='</div>';
+  h+='<div class="card" style="padding:10px 6px;">';
+  h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:4px;">';
+  ["L","M","M","J","V","S","D"].forEach(function(d){h+='<div style="text-align:center;font-size:10.5px;font-weight:700;color:var(--ink2);">'+d+'</div>';});
+  h+='</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;">';
+  for(var e=0;e<startCol;e++)h+='<div></div>';
+  for(var j=1;j<=nbJours;j++){
+    var k=mo+"-"+pad(j);
+    var g=gains[k]||0,d2=deps[k]||0,vide=(!g&&!d2);
+    var isToday=(k===today());
+    var cellAct=(!ro&&!vide)?' data-act="calDay" data-arg="'+k+'"':'';
+    h+='<div'+cellAct+' style="min-height:52px;border-radius:8px;padding:3px 2px;text-align:center;background:'+(vide?'rgba(0,0,0,.03)':'var(--bg)')+';'+(isToday?'box-shadow:inset 0 0 0 1.5px var(--accent);':'')+(cellAct?'cursor:pointer;':'')+'">';
+    h+='<div style="font-size:10px;font-weight:700;color:var(--ink2);">'+j+'</div>';
+    if(g)h+='<div class="num" style="font-size:9.5px;font-weight:800;color:var(--greenInk);white-space:nowrap;overflow:hidden;">+'+formatCompact(toE(g))+'</div>';
+    if(d2)h+='<div class="num" style="font-size:9.5px;font-weight:800;color:var(--red);white-space:nowrap;overflow:hidden;">−'+formatCompact(toE(d2))+'</div>';
+    h+='</div>';
+  }
+  h+='</div>';
+  h+='<p class="field-hint" style="margin-top:8px;text-align:center;">Vert = ventes encaissées · Rouge = achats, charges et retraits.'+(ro?'':' Touche un jour pour voir ses mouvements.')+'</p>';
+  h+='</div>';
+  h+='<button class="link-row" data-act="nav" data-arg="'+(ro?"registre":"home")+'">'+ic("chevron")+' Retour</button>';
+  h+='</div>';
   return h;
 }
 function moisDisponibles(){
@@ -1462,12 +1508,12 @@ document.addEventListener("click",function(ev){
   if(el.getAttribute("data-stop"))ev.stopPropagation();
 
   if(state.readOnly){
-    var ok={retrySync:1,onbCode:1,stockRefresh:1,regToggleMois:1,printPick:1,printPickClose:1,printPickCloseBtn:1,printMois:1,doPrint:1};
-    var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"||(arg==="stock"&&hasStock())));
+    var ok={retrySync:1,onbCode:1,stockRefresh:1,regToggleMois:1,printPick:1,printPickClose:1,printPickCloseBtn:1,printMois:1,doPrint:1,calShift:1};
+    var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"||arg==="calendrier"||(arg==="stock"&&hasStock())));
     if(!ok[act]&&!navOk)return;
   }
 
-  if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();if(arg==="movements")state.movDay=today();if(arg==="stock"){if(!hasStock())return;fetchStock();return;}render();return;}
+  if(act==="nav"){state.view=arg;if(arg==="resume")state.resumeDay=today();if(arg==="movements")state.movDay=today();if(arg==="calendrier")state.calMois=today().slice(0,7);if(arg==="stock"){if(!hasStock())return;fetchStock();return;}render();return;}
   if(act==="stockRefresh"){fetchStock();return;}
   if(act==="regToggleMois"){state.regMoisOpen=state.regMoisOpen||{};state.regMoisOpen[arg]=!state.regMoisOpen[arg];render();return;}
   if(act==="printPick"){state.printPick=true;render();return;}
@@ -1477,6 +1523,8 @@ document.addEventListener("click",function(ev){
   if(act==="doPrint"){try{window.print();}catch(e){showToast("Impression indisponible ici — ouvre dans Safari/Chrome");}return;}
   if(act==="movDayShift"){var d0=state.movDay||today();var dd=new Date(d0+"T12:00:00");dd.setDate(dd.getDate()+(+arg));var nd=dateKey(dd);if(nd>today())nd=today();state.movDay=nd;render();return;}
   if(act==="movToday"){state.movDay=today();render();return;}
+  if(act==="calShift"){var cm=state.calMois||today().slice(0,7);var cy=+cm.slice(0,4),cmi=+cm.slice(5,7)-1+(+arg);var nd2=new Date(cy,cmi,1);var nmo=nd2.getFullYear()+"-"+pad(nd2.getMonth()+1);if(nmo>today().slice(0,7))nmo=today().slice(0,7);state.calMois=nmo;render();return;}
+  if(act==="calDay"){state.movDay=arg;state.view="movements";render();return;}
   if(act==="settings"){state.view="settings";render();return;}
   if(act==="back"){var wasPrint=state.view==="print";state.editId=null;state.form=null;state.view=wasPrint?"registre":"home";render();return;}
   if(act==="add"){openAdd();return;}
