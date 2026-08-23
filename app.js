@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: calendrier-2026-08 */
+   build: entree-horsca-2026-08 */
 (function(){
 "use strict";
 
@@ -36,6 +36,10 @@ function parseTransfert(m){
    donc les transferts sont stockés avec un type autorisé (TRANSFERT_DB) et se synchronisent. */
 var TRANSFERT_DB="CHARGE";
 function isTransfert(m){return !!(m&&(m.type==="TRANSFERT"||(typeof m.note==="string"&&/^T\|[SRP]\|/.test(m.note))));}
+/* Entrée d'argent HORS chiffre d'affaires (remboursement de frais, avoir, geste bancaire…) :
+   stockée type "CHARGE" (contrainte base) + note "E|<libellé>" ; créditée au compte, jamais comptée dans le CA. */
+function isEntree(m){return !!(m&&typeof m.note==="string"&&m.note.charAt(0)==="E"&&m.note.charAt(1)==="|");}
+function entreeLabel(m){return String(m&&m.note||"").slice(2);}
 
 /* ===================== HELPERS ARGENT (centimes) ===================== */
 function toC(n){return Math.round((Number(n)||0)*100);}
@@ -85,6 +89,7 @@ function effectsC(movs){
   var e={especes:0,ca:0,revolut:0};
   for(var i=0;i<movs.length;i++){var m=movs[i],a=toC(m.montant);
     if(isTransfert(m)){var tr=parseTransfert(m);if(tr.nature==="S"){if(e[tr.src]!=null)e[tr.src]-=a;if(e[tr.dst]!=null)e[tr.dst]+=a;}else if(tr.nature==="R"){if(e[tr.dst]!=null)e[tr.dst]+=a;}/* nature P (perso↔perso) : aucun effet business */}
+    else if(isEntree(m))e[m.compte]+=a;
     else if(m.type==="VENTE")e[m.compte]+=a;
     else if(m.type==="REMISE"){e.especes-=a;e.ca+=a;}
     else e[m.compte]-=a;}
@@ -97,6 +102,7 @@ function deltasForAccount(dayMovs,acct){
   var arr=[];
   for(var i=0;i<dayMovs.length;i++){var m=dayMovs[i],a=toC(m.montant);
     if(isTransfert(m)){var tr=parseTransfert(m);if(tr.nature==="S"){if(tr.src===acct)arr.push(-a);else if(tr.dst===acct)arr.push(a);}else if(tr.nature==="R"&&tr.dst===acct)arr.push(a);}
+    else if(isEntree(m)){if(m.compte===acct)arr.push(a);}
     else if(m.type==="VENTE"&&m.compte===acct)arr.push(a);
     else if(m.type==="REMISE"){if(acct==="especes")arr.push(-a);else if(acct==="ca")arr.push(a);}
     else if((m.type==="ACHAT"||m.type==="CHARGE"||m.type==="RETRAIT")&&m.compte===acct)arr.push(-a);
@@ -146,7 +152,7 @@ function buildResumeMentor(s,allMovs,k){
   L.push("CB Crédit Agricole : "+eurC(toE(ca.ca)));
   L.push("Revolut : "+eurC(toE(ca.revolut)));
   L.push("Total : "+eurC(toE(ca.total)));
-  var sorties=d.dayMovs.filter(function(m){return !isTransfert(m)&&(m.type==="ACHAT"||m.type==="CHARGE"||m.type==="RETRAIT");});
+  var sorties=d.dayMovs.filter(function(m){return !isTransfert(m)&&!isEntree(m)&&(m.type==="ACHAT"||m.type==="CHARGE"||m.type==="RETRAIT");});
   L.push("Sorties du jour");
   if(!sorties.length){L.push("Aucune sortie.");}
   else{
@@ -198,6 +204,7 @@ function buildLedger(s, movs, debts, jours){
         else if(trL.nature==="R"){lines.push({label:dnL,sub:"⚖️ Rééquilibrage — couvert avec argent perso"+(trL.label?" · "+trL.label:""),recetteC:a,debitC:0});}
         else{lines.push({label:snL,sub:"🔄 Transfert → "+dnL+(trL.label?" · "+trL.label:""),recetteC:0,debitC:a});lines.push({label:dnL,sub:"🔄 Reçu de "+snL,recetteC:a,debitC:0});}
       }
+      else if(isEntree(m)) lines.push({label:cn,sub:"Entrée (hors CA)"+(entreeLabel(m)?" — "+entreeLabel(m):""),recetteC:a,debitC:0});
       else if(m.type==="VENTE") lines.push({label:cn,sub:"Vente"+(m.note?" — "+m.note:""),recetteC:a,debitC:0});
       else if(m.type==="REMISE"){
         lines.push({label:"Espèces",sub:"Remise vers la banque",recetteC:0,debitC:a});
@@ -645,7 +652,7 @@ function viewHome(){
 }
 
 function viewAdd(){
-  var f=state.form,isV=f.type==="VENTE",isR=f.type==="REMISE",isP=f.type==="REMB",isPerso=f.type==="PERSO",isRet=f.type==="RETRAIT",isT=f.type==="TRANSFERT";
+  var f=state.form,isV=f.type==="VENTE",isR=f.type==="REMISE",isP=f.type==="REMB",isPerso=f.type==="PERSO",isRet=f.type==="RETRAIT",isT=f.type==="TRANSFERT",isEnt=f.type==="ENTREE";
   var choices=[{id:"especes",label:"Espèces"},{id:"ca",label:isV?"CB":"Crédit Agricole",sub:isV?"Crédit Agricole":null},{id:"revolut",label:"Revolut"}];
   var h='<div class="view">';
   h+='<p class="section-title">Type de mouvement</p><div class="type-grid">';
@@ -653,6 +660,7 @@ function viewAdd(){
   for(var i=0;i<ks.length;i++){var t=TYPES[ks[i]];if(t.id==="TRANSFERT")continue;
     h+='<button class="type-btn'+(f.type===t.id?" active":"")+'" data-act="type" data-arg="'+t.id+'"><span class="sens-dot '+t.sens+'"></span>'+t.label+'</button>';
   }
+  h+='<button class="type-btn'+(isEnt?" active":"")+'" data-act="type" data-arg="ENTREE"><span class="sens-dot entree"></span>Entrée hors CA</button>';
   h+='<button class="type-btn'+(isP?" active":"")+'" data-act="type" data-arg="REMB"><span class="sens-dot sortie"></span>Paiement dette</button>';
   h+='<button class="type-btn'+(isPerso?" active":"")+'" data-act="type" data-arg="PERSO"><span class="sens-dot sortie"></span>Dépense perso</button>';
   h+='<button class="type-btn full2'+(isT?" active":"")+'" data-act="type" data-arg="TRANSFERT"><span class="sens-dot transfert"></span>🔄 Transfert entre comptes</button>';
@@ -726,6 +734,13 @@ function viewAdd(){
       h+='</div>';
     }else if(isR){
       h+='<p class="section-title">Sens du transfert</p><div class="transfer-box">Espèces <span class="arrow">→</span> Crédit Agricole</div>';
+    }else if(isEnt){
+      h+='<div class="note-box">Argent qui <b>rentre</b> sur un compte <b>sans compter dans ton chiffre d\'affaires</b> (remboursement de frais, avoir, geste bancaire…).</div>';
+      h+='<p class="section-title">Sur quel compte ça rentre ?</p><div class="seg">';
+      for(var ke=0;ke<choices.length;ke++){var ce=choices[ke];
+        h+='<button class="seg-btn'+(f.compte===ce.id?" active":"")+'" data-act="compte" data-arg="'+ce.id+'">'+ce.label+'</button>';
+      }
+      h+='</div>';
     }else if(isPerso){
       h+='<div class="note-box">Dépense payée avec <b>ton argent perso</b> (ta cagnotte). Ça n\'affecte pas les comptes du business.</div>';
       h+='<p class="section-title">Depuis quelle enveloppe perso ?</p><div class="seg">';
@@ -743,7 +758,7 @@ function viewAdd(){
     }
     if(isPerso||f.type==="ACHAT"||f.type==="CHARGE"){h+='<button type="button" class="btn btn-ghost full" style="margin-top:2px;" data-act="scanTicket">📷 Scanner le ticket</button>'+ocrInfoHTML();}
     h+='<p class="section-title">Montant</p><div class="amount-field"><input id="montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(f.montant||"")+'"><span class="amount-cur">€</span></div>';
-    var notePh=isPerso?"ex : essence, courses, coiffeur…":(isRet?"ex : retrait semaine (optionnel)":"ex : Railway, marché de Saint-Paul…");
+    var notePh=isEnt?"ex : remboursement frais bancaires":(isPerso?"ex : essence, courses, coiffeur…":(isRet?"ex : retrait semaine (optionnel)":"ex : Railway, marché de Saint-Paul…"));
     h+='<p class="section-title">'+(isPerso?"Sur quoi ? (libellé)":"Note / libellé (optionnel)")+'</p><input id="note" class="text-input" type="text" placeholder="'+notePh+'" value="'+esc(f.note||"")+'">';
   }
   h+='<button class="btn btn-primary btn-lg full" data-act="submitMov">'+ic("check")+(isP?"Payer la dette":(state.editId?"Enregistrer les modifications":"Valider"))+'</button>';
@@ -768,10 +783,11 @@ function viewMovements(){
   }else{
     h+='<div class="mov-list">';
     for(var i=0;i<tmovs.length;i++){var m=tmovs[i];
-      var transf=isTransfert(m),vente=!transf&&m.type==="VENTE",remise=!transf&&m.type==="REMISE";
-      var cls=vente?"pos":(remise||transf?"tr":"out"),sign=vente?"+":(remise||transf?"":"-");
+      var transf=isTransfert(m),entree=!transf&&isEntree(m),vente=!transf&&m.type==="VENTE",remise=!transf&&m.type==="REMISE";
+      var cls=(vente||entree)?"pos":(remise||transf?"tr":"out"),sign=(vente||entree)?"+":(remise||transf?"":"-");
       var typeLbl=TYPES[m.type].label,sub;
       if(transf){var tr=parseTransfert(m),sn=(COMPTES[tr.src]||{}).nom||tr.src,dn=(COMPTES[tr.dst]||{}).nom||tr.dst;typeLbl=tr.nature==="R"?"⚖️ Rééquilibrage":"🔄 Transfert";sub=(tr.nature==="R"?"Argent perso → "+dn:sn+" → "+dn)+(tr.label?" · "+esc(tr.label):"");}
+      else if(entree){typeLbl="💶 Entrée (hors CA)";sub=COMPTES[m.compte].nom+(entreeLabel(m)?" · "+esc(entreeLabel(m)):"");}
       else{sub=remise?"Espèces → Crédit Agricole":COMPTES[m.compte].nom;if(m.note)sub+=" · "+esc(m.note);}
       h+='<div class="mov-row" data-act="editMov" data-arg="'+m.id+'"><div class="mov-main"><div class="mov-top"><span class="mov-type">'+typeLbl+'</span><span class="mov-heure">'+frHeure(m.ts)+'</span></div><div class="mov-sub">'+sub+'</div></div><div class="mov-right"><span class="mov-amt num '+cls+'">'+sign+formatNum(m.montant)+' €</span><button class="icon-btn small" data-act="delMov" data-arg="'+m.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button></div></div>';
     }
@@ -1006,7 +1022,7 @@ function viewCalendrier(){
   movs.forEach(function(m){
     if(m.date.slice(0,7)!==mo||isTransfert(m))return;
     var a=toC(m.montant);
-    if(m.type==="VENTE")gains[m.date]=(gains[m.date]||0)+a;
+    if(m.type==="VENTE"||isEntree(m))gains[m.date]=(gains[m.date]||0)+a;
     else if(m.type==="ACHAT"||m.type==="CHARGE"||m.type==="RETRAIT")deps[m.date]=(deps[m.date]||0)+a;
   });
   var y=+mo.slice(0,4),mi=+mo.slice(5,7)-1;
@@ -1037,7 +1053,7 @@ function viewCalendrier(){
     h+='</div>';
   }
   h+='</div>';
-  h+='<p class="field-hint" style="margin-top:8px;text-align:center;">Vert = ventes encaissées · Rouge = achats, charges et retraits.'+(ro?'':' Touche un jour pour voir ses mouvements.')+'</p>';
+  h+='<p class="field-hint" style="margin-top:8px;text-align:center;">Vert = ventes et entrées · Rouge = achats, charges et retraits.'+(ro?'':' Touche un jour pour voir ses mouvements.')+'</p>';
   h+='</div>';
   h+='<button class="link-row" data-act="nav" data-arg="'+(ro?"registre":"home")+'">'+ic("chevron")+' Retour</button>';
   h+='</div>';
@@ -1157,6 +1173,10 @@ function buildMovFromForm(){
     var note="T|"+(f.nature==="R"?"R":(f.nature==="P"?"P":"S"))+"|"+(f.src||"especes")+"|"+(f.dst||"revolut")+"|"+((f.note||"").trim());
     return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:TRANSFERT_DB,compte:f.src||"especes",montant:mtt,note:note,_dirty:true};
   }
+  if(f.type==="ENTREE"){
+    var mte=round2(parseMontant(f.montant));
+    return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mte,note:"E|"+((f.note||"").trim()||"Entrée"),_dirty:true};
+  }
   var montant=round2(parseMontant(f.montant));
   return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:f.type,compte:f.type==="REMISE"?"especes":f.compte,montant:montant,note:(f.note||"").trim(),_dirty:true};
 }
@@ -1196,7 +1216,7 @@ function submitMov(){
   if(f.type==="PERSO"&&state.ocrTicket){m.note=(m.note||"")+" ⟦"+JSON.stringify(state.ocrTicket)+"⟧";}
   if(isTransfert(m)){var trv=parseTransfert(m);if(trv.src===trv.dst){showToast("Choisis deux comptes différents");return;}}
   var debit=null;
-  if(isTransfert(m)){var trg=parseTransfert(m);debit=(trg.nature==="S")?trg.src:null;}else if(m.type==="REMISE")debit="especes";else if(m.type!=="VENTE")debit=m.compte;
+  if(isTransfert(m)){var trg=parseTransfert(m);debit=(trg.nature==="S")?trg.src:null;}else if(isEntree(m)){debit=null;}else if(m.type==="REMISE")debit="especes";else if(m.type!=="VENTE")debit=m.compte;
   if(debit){
     var others=activeMovs().filter(function(x){return x.id!==m.id;});
     var bal=balancesC(state.settings,others.concat([m]));
@@ -1529,7 +1549,7 @@ document.addEventListener("click",function(ev){
   if(act==="back"){var wasPrint=state.view==="print";state.editId=null;state.form=null;state.view=wasPrint?"registre":"home";render();return;}
   if(act==="add"){openAdd();return;}
   if(act==="quick"){openAdd({type:"VENTE",compte:arg});return;}
-  if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if(arg==="TRANSFERT"){if(!state.form.nature)state.form.nature="S";if(!state.form.src)state.form.src="especes";if(!state.form.dst||state.form.dst===state.form.src)state.form.dst=(state.form.src==="especes"?"ca":"especes");}else if((arg==="PERSO"||arg==="RETRAIT")){if(state.form.compte==="ca"||ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";}else if((arg==="VENTE"||arg==="REMB")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
+  if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if(arg==="TRANSFERT"){if(!state.form.nature)state.form.nature="S";if(!state.form.src)state.form.src="especes";if(!state.form.dst||state.form.dst===state.form.src)state.form.dst=(state.form.src==="especes"?"ca":"especes");}else if((arg==="PERSO"||arg==="RETRAIT")){if(state.form.compte==="ca"||ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";}else if((arg==="VENTE"||arg==="REMB"||arg==="ENTREE")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
   if(act==="openTransfert"){openAdd({type:"TRANSFERT",nature:"S",src:"especes",dst:"ca",montant:"",note:""});return;}
   if(act==="persoTransfert"){openAdd({type:"TRANSFERT",nature:"P",src:"especes",dst:"revolut",montant:"",note:""});return;}
   if(act==="trNature"){captureForm();state.form.nature=arg;if(arg==="R"&&state.form.src!=="especes"&&state.form.src!=="revolut")state.form.src="especes";if(state.form.dst===state.form.src)state.form.dst=(state.form.src==="especes"?"ca":"especes");render();return;}
@@ -1550,7 +1570,7 @@ document.addEventListener("click",function(ev){
   if(act==="ticketClose"){if(ev.target===el){state.ticketView=null;render();}return;}
   if(act==="ticketCloseBtn"){state.ticketView=null;render();return;}
   if(act==="ticketEdit"){state.ticketView=null;var mm=findMov(arg);if(mm){state.editId=arg;state.ocrTicket=ticketOf(mm.note);state.ocrInfo=null;state.ocrDate=null;state.form={type:"PERSO",compte:(mm.compte==="ca"?"especes":mm.compte),montant:String(mm.montant).replace(".",","),note:stripTicket(mm.note).replace(/^Perso · /,"")};state.view="add";}render();return;}
-  if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;state.ocrTicket=ticketOf(m.note);state.ocrInfo=null;state.ocrDate=null;if(isTransfert(m)){var trE=parseTransfert(m);state.form={type:"TRANSFERT",nature:trE.nature,src:trE.src,dst:trE.dst,montant:String(m.montant).replace(".",","),note:trE.label||""};}else if(isPersoDep(m)){state.form={type:"PERSO",compte:(m.compte==="ca"?"especes":m.compte),montant:String(m.montant).replace(".",","),note:stripTicket(m.note).replace(/^Perso · /,"")};}else{state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};}state.view="add";render();}return;}
+  if(act==="editMov"){var m=findMov(arg);if(m){state.editId=arg;state.ocrTicket=ticketOf(m.note);state.ocrInfo=null;state.ocrDate=null;if(isTransfert(m)){var trE=parseTransfert(m);state.form={type:"TRANSFERT",nature:trE.nature,src:trE.src,dst:trE.dst,montant:String(m.montant).replace(".",","),note:trE.label||""};}else if(isEntree(m)){state.form={type:"ENTREE",compte:m.compte,montant:String(m.montant).replace(".",","),note:entreeLabel(m)};}else if(isPersoDep(m)){state.form={type:"PERSO",compte:(m.compte==="ca"?"especes":m.compte),montant:String(m.montant).replace(".",","),note:stripTicket(m.note).replace(/^Perso · /,"")};}else{state.form={type:m.type,compte:m.compte,montant:String(m.montant).replace(".",","),note:m.note||""};}state.view="add";render();}return;}
   if(act==="delMov"){deleteMov(arg);return;}
   if(act==="editMarge"){editMarge(arg);return;}
   if(act==="addDette"){addDette();return;}
