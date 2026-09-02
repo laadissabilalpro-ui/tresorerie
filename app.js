@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: safari-launch-2026-09 */
+   build: total-haut-2026-09 */
 (function(){
 "use strict";
 
@@ -1168,6 +1168,8 @@ function viewPrint(){
     +'}</style>';
   h+='<div class="card" style="padding:14px 12px;">';
   h+='<div style="text-align:center;margin-bottom:4px;"><div style="font-size:19px;font-weight:800;">D\'Or Blanc — Feuille de caisse</div><div style="font-size:14px;font-weight:700;margin-top:2px;">'+nomMois(mo)+'</div><div style="font-size:11.5px;color:var(--ink2);margin-top:2px;">Éditée le '+frDate(today())+'</div></div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;border:1.5px solid var(--accent);border-radius:8px;padding:8px 11px;margin:8px 0 2px;"><span style="font-size:11.5px;font-weight:800;letter-spacing:.06em;">TOTAL DU MOIS</span><span class="num" style="font-size:16px;font-weight:800;white-space:nowrap;">'+money(toE(tm.total))+'</span></div>';
+  h+='<div style="font-size:10.5px;color:var(--ink2);text-align:center;margin-bottom:6px;">Espèces '+formatCompact(toE(tm.especes))+' € · CB '+formatCompact(toE(tm.ca))+' € · N26 '+formatCompact(toE(tm.revolut))+' €</div>';
   if(!daysMo.length)h+='<p class="muted" style="padding:10px 0;">Aucun mouvement ce mois-là.</p>';
   else h+='<div style="overflow-x:auto;">'+ledgerTableHTML(Lmois,ro,moisMap,true)+'</div>';
   h+='<div style="display:flex;justify-content:space-between;font-size:14px;font-weight:800;padding:9px 2px;border-top:2px solid var(--accent);margin-top:6px;"><span>Solde en fin de mois</span><span class="num">'+money(toE(finC))+'</span></div>';
