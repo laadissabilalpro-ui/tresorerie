@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: n26-2026-08 */
+   build: print-orblanc-2026-09 */
 (function(){
 "use strict";
 
@@ -374,7 +374,7 @@ var state={
   code:lget("treso:code",""),
   readOnly:false,
   settings:null, movements:[], debts:[], jours:{}, joursDirty:{},
-  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{}, ticketView:null, ocrTicket:null, printMois:null, printPick:false, calMois:null, ventesJour:{}, ventesJourSt:{},
+  view:"home", form:null, resumeDay:null, editId:null, movDay:null, stock:null, regMoisOpen:{}, ticketView:null, ocrTicket:null, printMois:null, printPick:false, printType:"feuille", calMois:null, ventesJour:{}, ventesJourSt:{},
   confirm:null, modal:null, channel:null, ready:false, firstSyncDone:false
 };
 var RESERVE_MARK="__RESERVE_PERSO__";
@@ -444,7 +444,7 @@ function render(){
     if(!navigator.onLine){app.innerHTML=state.readOnly?msgScreen("Hors-ligne","Connecte-toi à internet pour afficher les données partagées."):viewOnbSettings();return;}
     app.innerHTML=state.readOnly?msgScreen("Aucune donnée","Aucune donnée n'est encore partagée pour ce code de consultation."):viewOnbSettings();return;
   }
-  if(state.readOnly && state.view!=="perso" && !(state.view==="stock"&&hasStock()) && state.view!=="print" && state.view!=="calendrier") state.view="registre"; // registre + pages perso/print (+stock si dispo) accessibles
+  if(state.readOnly && state.view!=="perso" && !(state.view==="stock"&&hasStock()) && state.view!=="print" && state.view!=="printcal" && state.view!=="calendrier") state.view="registre"; // registre + pages perso/print (+stock si dispo) accessibles
   if(state.view==="stock"&&!hasStock())state.view=state.readOnly?"registre":"home";
   else if(state.view==="add"||state.view==="settings"){} // ok
   var html=header();
@@ -456,12 +456,13 @@ function render(){
   else if(state.view==="registre")html+=viewRegistre();
   else if(state.view==="print")html+=viewPrint();
   else if(state.view==="calendrier")html+=viewCalendrier();
+  else if(state.view==="printcal")html+=viewPrintCal();
   else if(state.view==="perso")html+=viewPerso();
   else if(state.view==="stock")html+=viewStock();
   else if(state.view==="settings")html+=viewSettings();
   else html+=viewHome();
   html+="</main>";
-  if(!state.readOnly && state.view!=="add" && state.view!=="settings" && state.view!=="print")html+=bottomNav();
+  if(!state.readOnly && state.view!=="add" && state.view!=="settings" && state.view!=="print" && state.view!=="printcal")html+=bottomNav();
   if(state.confirm)html+=confirmModal();
   if(state.modal)html+=modalInput();
   if(state.ticketView)html+=ticketModal();
@@ -473,8 +474,8 @@ function render(){
 }
 
 function header(){
-  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",stock:"Stock",settings:"Réglages",print:"Feuille de caisse",calendrier:"Calendrier"};
-  var showBack=(!state.readOnly)&&(state.view==="add"||state.view==="settings"||state.view==="print");
+  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",stock:"Stock",settings:"Réglages",print:"Feuille de caisse",printcal:"Calendrier du mois",calendrier:"Calendrier"};
+  var showBack=(!state.readOnly)&&(state.view==="add"||state.view==="settings"||state.view==="print"||state.view==="printcal");
   var left=showBack?'<button class="icon-btn" data-act="back" aria-label="Retour">'+ic("home")+'</button>':'<div class="header-brand"><span class="brand-dot"></span></div>';
   var right;
   if(state.readOnly)right=syncBadgeHTML()+'<span class="ro-badge">Consultation</span>';
@@ -1059,6 +1060,66 @@ function viewCalendrier(){
   h+='</div>';
   return h;
 }
+function viewPrintCal(){
+  var ro=state.readOnly,mo=state.printMois||today().slice(0,7);
+  var movs=activeMovs(),gains={},deps={};
+  movs.forEach(function(m){
+    if(m.date.slice(0,7)!==mo||isTransfert(m))return;
+    var a=toC(m.montant);
+    if(m.type==="VENTE"||isEntree(m))gains[m.date]=(gains[m.date]||0)+a;
+    else if(m.type==="ACHAT"||m.type==="CHARGE"||m.type==="RETRAIT")deps[m.date]=(deps[m.date]||0)+a;
+  });
+  var y=+mo.slice(0,4),mi=+mo.slice(5,7)-1;
+  var nbJours=new Date(y,mi+1,0).getDate();
+  var startCol=(new Date(y,mi,1).getDay()+6)%7;
+  var totG=0,totD=0;Object.keys(gains).forEach(function(k){totG+=gains[k];});Object.keys(deps).forEach(function(k){totD+=deps[k];});
+  var netC=totG-totD;
+  var OR="#C9A961",OR2="#A5843E",IVO="#F6F1E7",CRE="#EFE8D8",NOIR="#1E1E1E";
+  var h='<div class="view pcal-sheet">';
+  h+='<style>@media print{.header,nav,.no-print{display:none!important}body{background:#fff!important}main.content{padding:0!important;max-width:none!important}.card{box-shadow:none!important}.pcal-sheet .view{gap:6px}.pcal-sheet,.pcal-sheet *{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>';
+  h+='<div class="card" style="background:'+IVO+';border:1px solid '+OR+';padding:16px 12px;">';
+  h+='<div style="text-align:center;font-family:Georgia,\'Times New Roman\',serif;font-size:18px;letter-spacing:.32em;color:'+NOIR+';">PARFUMS D\'OR BLANC</div>';
+  h+='<div style="width:46px;height:2px;background:'+OR+';margin:8px auto;"></div>';
+  h+='<div style="text-align:center;font-size:10px;font-weight:700;letter-spacing:.28em;color:'+OR2+';">CALENDRIER DU MOIS</div>';
+  h+='<div style="text-align:center;font-family:Georgia,serif;font-size:21px;font-weight:700;color:'+NOIR+';margin-top:4px;">'+nomMois(mo)+'</div>';
+  h+='<div style="text-align:center;font-size:9px;color:#8a8a86;letter-spacing:.12em;margin-top:2px;">ÉDITÉ LE '+frDate(today()).toUpperCase()+'</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:0;margin-top:12px;background:'+NOIR+';border:1px solid '+NOIR+';">';
+  ["LUN","MAR","MER","JEU","VEN","SAM","DIM"].forEach(function(d){h+='<div style="text-align:center;font-size:8.5px;font-weight:700;letter-spacing:.14em;color:'+OR+';padding:6px 0;">'+d+'</div>';});
+  h+='</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:0;border-left:1px solid '+OR+';border-bottom:1px solid '+OR+';">';
+  for(var e=0;e<startCol;e++)h+='<div style="border-right:1px solid '+OR+';background:'+CRE+';"></div>';
+  for(var j=1;j<=nbJours;j++){
+    var k=mo+"-"+pad(j);
+    var g=gains[k]||0,d2=deps[k]||0,vide=(!g&&!d2);
+    h+='<div style="border-right:1px solid '+OR+';border-top:1px solid '+OR+';min-height:56px;padding:3px 3px;background:'+(vide?CRE:"#fff")+';">';
+    h+='<div style="font-size:8.5px;font-weight:700;color:'+OR2+';">'+j+'</div>';
+    if(g)h+='<div class="num" style="font-size:10px;font-weight:800;color:'+NOIR+';white-space:nowrap;">+'+formatCompact(toE(g))+'</div>';
+    if(d2)h+='<div class="num" style="font-size:9.5px;font-weight:700;color:'+OR2+';white-space:nowrap;">−'+formatCompact(toE(d2))+'</div>';
+    h+='</div>';
+  }
+  var reste=(startCol+nbJours)%7;
+  if(reste)for(var e2=reste;e2<7;e2++)h+='<div style="border-right:1px solid '+OR+';border-top:1px solid '+OR+';background:'+CRE+';"></div>';
+  h+='</div>';
+  h+='<div style="display:flex;gap:8px;margin-top:12px;border:1.5px solid '+OR+';padding:9px 8px;background:#fff;">';
+  var syn=function(lbl,val,col){return '<div style="flex:1;text-align:center;"><div style="font-size:7.5px;font-weight:700;letter-spacing:.16em;color:'+OR2+';">'+lbl+'</div><div class="num" style="font-size:14px;font-weight:800;color:'+(col||NOIR)+';margin-top:3px;border-bottom:1px solid '+OR+';padding-bottom:3px;">'+val+'</div></div>';};
+  h+=syn("CA ENCAISSÉ","+"+formatCompact(toE(totG))+" €");
+  h+=syn("DÉPENSES","−"+formatCompact(toE(totD))+" €",OR2);
+  h+=syn("RÉSULTAT NET",(netC<0?"−":"+")+formatCompact(toE(Math.abs(netC)))+" €",netC<0?"#8f2f2f":NOIR);
+  h+='</div>';
+  h+='<div style="text-align:center;font-size:8px;letter-spacing:.2em;color:#8a8a86;border-top:1px solid '+OR+';padding-top:7px;margin-top:12px;">D\'OR BLANC RÉUNION · LAADISSA BILAL</div>';
+  h+='</div>';
+  var standalone=false;try{standalone=(navigator.standalone===true)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches);}catch(e){}
+  if(standalone){
+    var purl=(ro?("vue.html?c="+encodeURIComponent(state.code||"")+"&"):"index.html?")+"print="+mo+"&pt=cal&go=1";
+    h+='<a class="btn btn-primary btn-lg full no-print" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px;" href="'+purl+'" target="_blank" rel="noopener">🖨️ Ouvrir dans Safari pour imprimer</a>';
+    h+='<p class="field-hint no-print" style="text-align:center;">Un écran blanc peut apparaître un instant : c\'est Safari qui s\'ouvre. L\'impression se lance ensuite toute seule.</p>';
+  }else{
+    h+='<button class="btn btn-primary btn-lg full no-print" data-act="doPrint">🖨️ Imprimer / PDF</button>';
+  }
+  h+='<button class="link-row no-print" data-act="nav" data-arg="registre">'+ic("chevron")+' Retour au registre</button>';
+  h+='</div>';
+  return h;
+}
 function moisDisponibles(){
   var movs=activeMovs(),set={};
   movs.forEach(function(m){set[m.date.slice(0,7)]=1;});
@@ -1067,7 +1128,13 @@ function moisDisponibles(){
 }
 function printPickModal(){
   var mois=moisDisponibles();
-  var h='<div class="overlay" data-act="printPickClose"><div class="modal" data-stop="1"><p class="modal-msg">🖨️ Imprimer quel mois ?</p><div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;max-height:50vh;overflow-y:auto;">';
+  var pt=state.printType||"feuille";
+  var h='<div class="overlay" data-act="printPickClose"><div class="modal" data-stop="1"><p class="modal-msg">🖨️ Imprimer quel mois ?</p>';
+  h+='<div class="seg" style="margin-top:4px;">';
+  h+='<button class="seg-btn'+(pt==="feuille"?" active":"")+'" data-act="printType" data-arg="feuille">📄 Feuille de caisse</button>';
+  h+='<button class="seg-btn'+(pt==="cal"?" active":"")+'" data-act="printType" data-arg="cal">📅 Calendrier</button>';
+  h+='</div>';
+  h+='<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;max-height:50vh;overflow-y:auto;">';
   mois.forEach(function(mo){h+='<button class="btn btn-secondary full" data-act="printMois" data-arg="'+mo+'">'+nomMois(mo)+'</button>';});
   h+='</div><div class="modal-actions" style="margin-top:12px;"><button class="btn btn-ghost full" data-act="printPickCloseBtn">Annuler</button></div></div></div>';
   return h;
@@ -1089,7 +1156,14 @@ function viewPrint(){
   var moisMap={};moisMap[mo]=tm;
   var Lmois={openC:reportC,openLines:[],days:daysMo,soldeC:finC};
   var h='<div class="view print-sheet">';
-  h+='<style>@media print{.header,nav,.no-print{display:none!important}body{background:#fff!important}main.content{padding:0!important;max-width:none!important}.card{box-shadow:none!important;border:none!important;padding:0!important}table.ledger{min-width:0!important;font-size:12px!important}tr{page-break-inside:avoid}.print-sheet .view{gap:6px}}</style>';
+  h+='<style>@media print{.header,nav,.no-print{display:none!important}body{background:#fff!important}main.content{padding:0!important;max-width:none!important}.card{box-shadow:none!important;border:none!important;padding:0!important}table.ledger{min-width:0!important;font-size:12px!important}tr{page-break-inside:avoid}.print-sheet .view{gap:6px}'
+    +'.print-sheet,.print-sheet *{color:#000 !important;}'
+    +'.print-sheet table.ledger td.rec,.print-sheet table.ledger td.deb,.print-sheet table.ledger th,.print-sheet .led-sub{color:#000 !important;}'
+    +'.print-sheet table.ledger tr.grp td{background:#fff !important;border-top:1.5px solid #000 !important;font-weight:800 !important;}'
+    +'.print-sheet table.ledger tr.tot td{border-top:1px solid #000 !important;}'
+    +'.print-sheet table.ledger tr.moisrecap td{background:#fff !important;border-top:2.5px double #000 !important;}'
+    +'.print-sheet table.ledger td.deb::before{content:"\\2212 ";}'
+    +'}</style>';
   h+='<div class="card" style="padding:14px 12px;">';
   h+='<div style="text-align:center;margin-bottom:4px;"><div style="font-size:19px;font-weight:800;">D\'Or Blanc — Feuille de caisse</div><div style="font-size:14px;font-weight:700;margin-top:2px;">'+nomMois(mo)+'</div><div style="font-size:11.5px;color:var(--ink2);margin-top:2px;">Éditée le '+frDate(today())+'</div></div>';
   if(!daysMo.length)h+='<p class="muted" style="padding:10px 0;">Aucun mouvement ce mois-là.</p>';
@@ -1528,7 +1602,7 @@ document.addEventListener("click",function(ev){
   if(el.getAttribute("data-stop"))ev.stopPropagation();
 
   if(state.readOnly){
-    var ok={retrySync:1,onbCode:1,stockRefresh:1,regToggleMois:1,printPick:1,printPickClose:1,printPickCloseBtn:1,printMois:1,doPrint:1,calShift:1};
+    var ok={retrySync:1,onbCode:1,stockRefresh:1,regToggleMois:1,printPick:1,printPickClose:1,printPickCloseBtn:1,printMois:1,doPrint:1,calShift:1,printType:1};
     var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"||arg==="calendrier"||(arg==="stock"&&hasStock())));
     if(!ok[act]&&!navOk)return;
   }
@@ -1539,14 +1613,15 @@ document.addEventListener("click",function(ev){
   if(act==="printPick"){state.printPick=true;render();return;}
   if(act==="printPickClose"){if(ev.target===el){state.printPick=false;render();}return;}
   if(act==="printPickCloseBtn"){state.printPick=false;render();return;}
-  if(act==="printMois"){state.printPick=false;state.printMois=arg;state.view="print";render();window.scrollTo(0,0);return;}
+  if(act==="printType"){state.printType=arg;render();return;}
+  if(act==="printMois"){state.printPick=false;state.printMois=arg;state.view=(state.printType==="cal")?"printcal":"print";render();window.scrollTo(0,0);return;}
   if(act==="doPrint"){try{window.print();}catch(e){showToast("Impression indisponible ici — ouvre dans Safari/Chrome");}return;}
   if(act==="movDayShift"){var d0=state.movDay||today();var dd=new Date(d0+"T12:00:00");dd.setDate(dd.getDate()+(+arg));var nd=dateKey(dd);if(nd>today())nd=today();state.movDay=nd;render();return;}
   if(act==="movToday"){state.movDay=today();render();return;}
   if(act==="calShift"){var cm=state.calMois||today().slice(0,7);var cy=+cm.slice(0,4),cmi=+cm.slice(5,7)-1+(+arg);var nd2=new Date(cy,cmi,1);var nmo=nd2.getFullYear()+"-"+pad(nd2.getMonth()+1);if(nmo>today().slice(0,7))nmo=today().slice(0,7);state.calMois=nmo;render();return;}
   if(act==="calDay"){state.movDay=arg;state.view="movements";render();return;}
   if(act==="settings"){state.view="settings";render();return;}
-  if(act==="back"){var wasPrint=state.view==="print";state.editId=null;state.form=null;state.view=wasPrint?"registre":"home";render();return;}
+  if(act==="back"){var wasPrint=(state.view==="print"||state.view==="printcal");state.editId=null;state.form=null;state.view=wasPrint?"registre":"home";render();return;}
   if(act==="add"){openAdd();return;}
   if(act==="quick"){openAdd({type:"VENTE",compte:arg});return;}
   if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if(arg==="TRANSFERT"){if(!state.form.nature)state.form.nature="S";if(!state.form.src)state.form.src="especes";if(!state.form.dst||state.form.dst===state.form.src)state.form.dst=(state.form.src==="especes"?"ca":"especes");}else if((arg==="PERSO"||arg==="RETRAIT")){if(state.form.compte==="ca"||ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";}else if((arg==="VENTE"||arg==="REMB"||arg==="ENTREE")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
@@ -1613,7 +1688,7 @@ function start(){
   if(!state.readOnly && /^#(scan|reglages|settings)/i.test(location.hash||"")) state.view="settings";
   var pmo=getParam("print");
   if(pmo&&/^\d{4}-\d{2}$/.test(pmo)){
-    state.printMois=pmo;state.view="print";
+    state.printMois=pmo;state.view=(getParam("pt")==="cal")?"printcal":"print";
     var isStandalone=false;try{isStandalone=(navigator.standalone===true)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches);}catch(e){}
     if(getParam("go")==="1"&&!isStandalone){
       // Ouvert depuis l'app installée : lancer l'impression tout seul dès que la feuille est prête (ventes chargées ou timeout)
