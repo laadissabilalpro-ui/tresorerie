@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: total-haut-2026-09 */
+   build: cal-nb-2026-09 */
 (function(){
 "use strict";
 
@@ -1076,7 +1076,7 @@ function viewPrintCal(){
   var netC=totG-totD;
   var OR="#C9A961",OR2="#A5843E",IVO="#F6F1E7",CRE="#EFE8D8",NOIR="#1E1E1E";
   var h='<div class="view pcal-sheet">';
-  h+='<style>@media print{.header,nav,.no-print{display:none!important}body{background:#fff!important}main.content{padding:0!important;max-width:none!important}.card{box-shadow:none!important}.pcal-sheet .view{gap:6px}.pcal-sheet,.pcal-sheet *{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>';
+  h+='<style>@media print{.header,nav,.no-print{display:none!important}body{background:#fff!important}main.content{padding:0!important;max-width:none!important}.card{box-shadow:none!important}.pcal-sheet .view{gap:6px}.pcal-sheet,.pcal-sheet *{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.pcal-sheet div[style*="border"]{border-color:#6f6a5d !important;}}</style>';
   h+='<div class="card" style="background:'+IVO+';border:1px solid '+OR+';padding:16px 12px;">';
   h+='<div style="text-align:center;font-family:Georgia,\'Times New Roman\',serif;font-size:18px;letter-spacing:.32em;color:'+NOIR+';">PARFUMS D\'OR BLANC</div>';
   h+='<div style="width:46px;height:2px;background:'+OR+';margin:8px auto;"></div>';
@@ -1084,26 +1084,26 @@ function viewPrintCal(){
   h+='<div style="text-align:center;font-family:Georgia,serif;font-size:21px;font-weight:700;color:'+NOIR+';margin-top:4px;">'+nomMois(mo)+'</div>';
   h+='<div style="text-align:center;font-size:9px;color:#8a8a86;letter-spacing:.12em;margin-top:2px;">ÉDITÉ LE '+frDate(today()).toUpperCase()+'</div>';
   h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:0;margin-top:12px;background:'+NOIR+';border:1px solid '+NOIR+';">';
-  ["LUN","MAR","MER","JEU","VEN","SAM","DIM"].forEach(function(d){h+='<div style="text-align:center;font-size:8.5px;font-weight:700;letter-spacing:.14em;color:'+OR+';padding:6px 0;">'+d+'</div>';});
+  ["LUN","MAR","MER","JEU","VEN","SAM","DIM"].forEach(function(d){h+='<div style="text-align:center;font-size:10px;font-weight:700;letter-spacing:.14em;color:'+OR+';padding:8px 0;">'+d+'</div>';});
   h+='</div>';
   h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:0;border-left:1px solid '+OR+';border-bottom:1px solid '+OR+';">';
   for(var e=0;e<startCol;e++)h+='<div style="border-right:1px solid '+OR+';background:'+CRE+';"></div>';
   for(var j=1;j<=nbJours;j++){
     var k=mo+"-"+pad(j);
     var g=gains[k]||0,d2=deps[k]||0,vide=(!g&&!d2);
-    h+='<div style="border-right:1px solid '+OR+';border-top:1px solid '+OR+';min-height:56px;padding:3px 3px;background:'+(vide?CRE:"#fff")+';">';
-    h+='<div style="font-size:8.5px;font-weight:700;color:'+OR2+';">'+j+'</div>';
-    if(g)h+='<div class="num" style="font-size:10px;font-weight:800;color:'+NOIR+';white-space:nowrap;">+'+formatCompact(toE(g))+'</div>';
-    if(d2)h+='<div class="num" style="font-size:9.5px;font-weight:700;color:'+OR2+';white-space:nowrap;">−'+formatCompact(toE(d2))+'</div>';
+    h+='<div style="border-right:1px solid '+OR+';border-top:1px solid '+OR+';min-height:78px;padding:5px 4px;background:'+(vide?CRE:"#fff")+';">';
+    h+='<div style="font-size:11px;font-weight:800;color:'+NOIR+';">'+j+'</div>';
+    if(g)h+='<div class="num" style="font-size:13px;font-weight:800;color:'+NOIR+';white-space:nowrap;margin-top:2px;">+'+formatCompact(toE(g))+'</div>';
+    if(d2)h+='<div class="num" style="font-size:10px;font-weight:700;color:#54524d;white-space:nowrap;margin-top:1px;">−'+formatCompact(toE(d2))+'</div>';
     h+='</div>';
   }
   var reste=(startCol+nbJours)%7;
   if(reste)for(var e2=reste;e2<7;e2++)h+='<div style="border-right:1px solid '+OR+';border-top:1px solid '+OR+';background:'+CRE+';"></div>';
   h+='</div>';
   h+='<div style="display:flex;gap:8px;margin-top:12px;border:1.5px solid '+OR+';padding:9px 8px;background:#fff;">';
-  var syn=function(lbl,val,col){return '<div style="flex:1;text-align:center;"><div style="font-size:7.5px;font-weight:700;letter-spacing:.16em;color:'+OR2+';">'+lbl+'</div><div class="num" style="font-size:14px;font-weight:800;color:'+(col||NOIR)+';margin-top:3px;border-bottom:1px solid '+OR+';padding-bottom:3px;">'+val+'</div></div>';};
+  var syn=function(lbl,val,col){return '<div style="flex:1;text-align:center;"><div style="font-size:8.5px;font-weight:700;letter-spacing:.16em;color:'+OR2+';">'+lbl+'</div><div class="num" style="font-size:16px;font-weight:800;color:'+(col||NOIR)+';margin-top:3px;border-bottom:1px solid '+OR+';padding-bottom:3px;">'+val+'</div></div>';};
   h+=syn("CA ENCAISSÉ","+"+formatCompact(toE(totG))+" €");
-  h+=syn("DÉPENSES","−"+formatCompact(toE(totD))+" €",OR2);
+  h+=syn("DÉPENSES","−"+formatCompact(toE(totD))+" €","#54524d");
   h+=syn("RÉSULTAT NET",(netC<0?"−":"+")+formatCompact(toE(Math.abs(netC)))+" €",netC<0?"#8f2f2f":NOIR);
   h+='</div>';
   h+='<div style="text-align:center;font-size:8px;letter-spacing:.2em;color:#8a8a86;border-top:1px solid '+OR+';padding-top:7px;margin-top:12px;">D\'OR BLANC RÉUNION · LAADISSA BILAL</div>';
