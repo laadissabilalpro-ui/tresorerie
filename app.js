@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: print-orblanc-2026-09 */
+   build: safari-launch-2026-09 */
 (function(){
 "use strict";
 
@@ -1111,8 +1111,10 @@ function viewPrintCal(){
   var standalone=false;try{standalone=(navigator.standalone===true)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches);}catch(e){}
   if(standalone){
     var purl=(ro?("vue.html?c="+encodeURIComponent(state.code||"")+"&"):"index.html?")+"print="+mo+"&pt=cal&go=1";
-    h+='<a class="btn btn-primary btn-lg full no-print" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px;" href="'+purl+'" target="_blank" rel="noopener">🖨️ Ouvrir dans Safari pour imprimer</a>';
-    h+='<p class="field-hint no-print" style="text-align:center;">Un écran blanc peut apparaître un instant : c\'est Safari qui s\'ouvre. L\'impression se lance ensuite toute seule.</p>';
+    var absP=new URL(purl,location.href).href;
+    h+='<a class="btn btn-primary btn-lg full no-print" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px;" href="x-safari-'+absP+'">🖨️ Ouvrir dans Safari pour imprimer</a>';
+    h+='<button class="btn btn-ghost full no-print" data-act="copyPrintLink" data-arg="'+esc(absP)+'">📋 Copier le lien (si rien ne s\'ouvre)</button>';
+    h+='<p class="field-hint no-print" style="text-align:center;">Safari s\'ouvre et l\'impression se lance toute seule. Si le bouton ne fait rien : « Copier le lien » puis colle-le dans Safari.</p>';
   }else{
     h+='<button class="btn btn-primary btn-lg full no-print" data-act="doPrint">🖨️ Imprimer / PDF</button>';
   }
@@ -1174,8 +1176,10 @@ function viewPrint(){
   var standalone=false;try{standalone=(navigator.standalone===true)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches);}catch(e){}
   if(standalone){
     var purl=(ro?("vue.html?c="+encodeURIComponent(state.code||"")+"&"):"index.html?")+"print="+mo+"&go=1";
-    h+='<a class="btn btn-primary btn-lg full no-print" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px;" href="'+purl+'" target="_blank" rel="noopener">🖨️ Ouvrir dans Safari pour imprimer</a>';
-    h+='<p class="field-hint no-print" style="text-align:center;">Un écran blanc peut apparaître un instant : c\'est Safari qui s\'ouvre. L\'impression se lance ensuite toute seule (sinon : Partager → Imprimer).</p>';
+    var absP=new URL(purl,location.href).href;
+    h+='<a class="btn btn-primary btn-lg full no-print" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px;" href="x-safari-'+absP+'">🖨️ Ouvrir dans Safari pour imprimer</a>';
+    h+='<button class="btn btn-ghost full no-print" data-act="copyPrintLink" data-arg="'+esc(absP)+'">📋 Copier le lien (si rien ne s\'ouvre)</button>';
+    h+='<p class="field-hint no-print" style="text-align:center;">Safari s\'ouvre et l\'impression se lance toute seule. Si le bouton ne fait rien : « Copier le lien » puis colle-le dans Safari.</p>';
   }else{
     h+='<button class="btn btn-primary btn-lg full no-print" data-act="doPrint">🖨️ Imprimer / PDF</button>';
   }
@@ -1602,7 +1606,7 @@ document.addEventListener("click",function(ev){
   if(el.getAttribute("data-stop"))ev.stopPropagation();
 
   if(state.readOnly){
-    var ok={retrySync:1,onbCode:1,stockRefresh:1,regToggleMois:1,printPick:1,printPickClose:1,printPickCloseBtn:1,printMois:1,doPrint:1,calShift:1,printType:1};
+    var ok={retrySync:1,onbCode:1,stockRefresh:1,regToggleMois:1,printPick:1,printPickClose:1,printPickCloseBtn:1,printMois:1,doPrint:1,calShift:1,printType:1,copyPrintLink:1};
     var navOk=(act==="nav"&&(arg==="registre"||arg==="perso"||arg==="calendrier"||(arg==="stock"&&hasStock())));
     if(!ok[act]&&!navOk)return;
   }
@@ -1616,6 +1620,7 @@ document.addEventListener("click",function(ev){
   if(act==="printType"){state.printType=arg;render();return;}
   if(act==="printMois"){state.printPick=false;state.printMois=arg;state.view=(state.printType==="cal")?"printcal":"print";render();window.scrollTo(0,0);return;}
   if(act==="doPrint"){try{window.print();}catch(e){showToast("Impression indisponible ici — ouvre dans Safari/Chrome");}return;}
+  if(act==="copyPrintLink"){copyText(arg);return;}
   if(act==="movDayShift"){var d0=state.movDay||today();var dd=new Date(d0+"T12:00:00");dd.setDate(dd.getDate()+(+arg));var nd=dateKey(dd);if(nd>today())nd=today();state.movDay=nd;render();return;}
   if(act==="movToday"){state.movDay=today();render();return;}
   if(act==="calShift"){var cm=state.calMois||today().slice(0,7);var cy=+cm.slice(0,4),cmi=+cm.slice(5,7)-1+(+arg);var nd2=new Date(cy,cmi,1);var nmo=nd2.getFullYear()+"-"+pad(nd2.getMonth()+1);if(nmo>today().slice(0,7))nmo=today().slice(0,7);state.calMois=nmo;render();return;}
