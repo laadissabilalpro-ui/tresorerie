@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: cal-fit-2026-09 */
+   build: date-mouvement-2026-09 */
 (function(){
 "use strict";
 
@@ -471,6 +471,7 @@ function render(){
   if(!state.readOnly && state.view==="add"){var mi=document.getElementById("montant");if(mi)setTimeout(function(){try{mi.focus();}catch(e){}},120);}
   if(state.modal){var f0=document.getElementById(state.modal.fields[0].id);if(f0)setTimeout(function(){try{f0.focus();}catch(e){}},120);}
   if(!state.readOnly && state.view==="movements"){var md=document.getElementById("mov_date");if(md)md.addEventListener("change",function(){var v=md.value||today();if(v>today())v=today();state.movDay=v;render();});}
+  if(!state.readOnly && state.view==="add"){var mdf=document.getElementById("mov_datefield");if(mdf)mdf.addEventListener("change",function(){captureForm();if(state.form&&state.form.date>today())state.form.date=today();render();});}
 }
 
 function header(){
@@ -762,6 +763,11 @@ function viewAdd(){
     var notePh=isEnt?"ex : remboursement frais bancaires":(isPerso?"ex : essence, courses, coiffeur…":(isRet?"ex : retrait semaine (optionnel)":"ex : Railway, marché de Saint-Paul…"));
     h+='<p class="section-title">'+(isPerso?"Sur quoi ? (libellé)":"Note / libellé (optionnel)")+'</p><input id="note" class="text-input" type="text" placeholder="'+notePh+'" value="'+esc(f.note||"")+'">';
   }
+  var fDate=f.date||(state.editId&&findMov(state.editId)?findMov(state.editId).date:today());
+  h+='<p class="section-title">Date du mouvement</p>';
+  h+='<input type="date" id="mov_datefield" value="'+esc(fDate)+'" max="'+today()+'" style="width:100%;padding:12px 14px;border:1.5px solid rgba(0,0,0,.12);border-radius:12px;background:var(--card);font-family:inherit;font-size:15px;font-weight:700;color:var(--ink);">';
+  if(fDate!==today())h+='<p class="field-hint" style="color:#b3661f;font-weight:700;">⚠️ Ce mouvement sera enregistré au '+frDate(fDate)+', pas aujourd\'hui.</p>';
+  else h+='<p class="field-hint">Rentré après minuit ? Mets la date d\'hier pour que le CA reste sur le bon jour.</p>';
   h+='<button class="btn btn-primary btn-lg full" data-act="submitMov">'+ic("check")+(isP?"Payer la dette":(state.editId?"Enregistrer les modifications":"Valider"))+'</button>';
   if(state.editId)h+='<button class="btn btn-danger full" data-act="delMov" data-arg="'+state.editId+'">'+ic("trash")+'Supprimer ce mouvement</button>';
   h+='</div>';
@@ -878,7 +884,7 @@ function ledgerTableHTML(L,ro,moisMap,noFold){
 function dettePaidC(label){var pref=label?("Paiement dette : "+label):"Paiement dette",s=0;for(var i=0;i<state.movements.length;i++){var m=state.movements[i];if(!m._deleted&&m.note===pref)s+=toC(m.montant);}return s;}
 function detteBarColor(p){return p>=100?"#2e9e5b":(p>=70?"#5cb85c":(p>=30?"#e0a13a":"#d9534f"));}
 function dettesPanelHTML(debts,ro){
-  var open=debts.filter(function(d){return !d.settled_day;});
+  var open=debts.filter(function(d){return !d.settled_day;}).sort(function(a,b){return a.day<b.day?-1:1;});
   var total=0;open.forEach(function(d){total+=toC(d.montant);});
   var h='<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><p class="section-title flush">Ce que je dois</p>'+(ro?'':'<span class="num" style="font-weight:800;">'+money(toE(total))+'</span>')+'</div>';
   if(ro){
@@ -1219,6 +1225,7 @@ function captureForm(){
   if(!state.form)return;
   var mi=document.getElementById("montant");if(mi)state.form.montant=mi.value;
   var ni=document.getElementById("note");if(ni)state.form.note=ni.value;
+  var di=document.getElementById("mov_datefield");if(di&&di.value)state.form.date=di.value;
 }
 function openAdd(preset){
   state.editId=null;
@@ -1238,27 +1245,28 @@ function readSettingsForm(){
 function saveSettings(next){state.settings=next;state.settings._dirty=true;saveCache();}
 function buildMovFromForm(){
   var f=state.form,existing=state.editId?findMov(state.editId):null;
+  var mdate=(f.date&&/^\d{4}-\d{2}-\d{2}$/.test(f.date)&&f.date<=today())?f.date:(existing?existing.date:today());
   if(f.type==="REMB"){
     var dt=findDette(f.dette_id);
     var mt=round2(parseMontant(f.montant));
     if(dt&&mt>round2(dt.montant))mt=round2(dt.montant);
-    return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mt,note:"Paiement dette"+(dt&&dt.label?" : "+dt.label:""),dette_id:f.dette_id,_dirty:true};
+    return {id:state.editId||uuid(),date:mdate,ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mt,note:"Paiement dette"+(dt&&dt.label?" : "+dt.label:""),dette_id:f.dette_id,_dirty:true};
   }
   if(f.type==="PERSO"){
     var mtp=round2(parseMontant(f.montant));
-    return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mtp,note:"Perso · "+((f.note||"").trim()||"dépense"),_dirty:true};
+    return {id:state.editId||uuid(),date:mdate,ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mtp,note:"Perso · "+((f.note||"").trim()||"dépense"),_dirty:true};
   }
   if(f.type==="TRANSFERT"){
     var mtt=round2(parseMontant(f.montant));
     var note="T|"+(f.nature==="R"?"R":(f.nature==="P"?"P":"S"))+"|"+(f.src||"especes")+"|"+(f.dst||"revolut")+"|"+((f.note||"").trim());
-    return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:TRANSFERT_DB,compte:f.src||"especes",montant:mtt,note:note,_dirty:true};
+    return {id:state.editId||uuid(),date:mdate,ts:existing?existing.ts:Date.now(),type:TRANSFERT_DB,compte:f.src||"especes",montant:mtt,note:note,_dirty:true};
   }
   if(f.type==="ENTREE"){
     var mte=round2(parseMontant(f.montant));
-    return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mte,note:"E|"+((f.note||"").trim()||"Entrée"),_dirty:true};
+    return {id:state.editId||uuid(),date:mdate,ts:existing?existing.ts:Date.now(),type:"CHARGE",compte:f.compte,montant:mte,note:"E|"+((f.note||"").trim()||"Entrée"),_dirty:true};
   }
   var montant=round2(parseMontant(f.montant));
-  return {id:state.editId||uuid(),date:existing?existing.date:today(),ts:existing?existing.ts:Date.now(),type:f.type,compte:f.type==="REMISE"?"especes":f.compte,montant:montant,note:(f.note||"").trim(),_dirty:true};
+  return {id:state.editId||uuid(),date:mdate,ts:existing?existing.ts:Date.now(),type:f.type,compte:f.type==="REMISE"?"especes":f.compte,montant:montant,note:(f.note||"").trim(),_dirty:true};
 }
 function findMov(id){for(var i=0;i<state.movements.length;i++)if(state.movements[i].id===id)return state.movements[i];return null;}
 function findDette(id){for(var i=0;i<state.debts.length;i++)if(state.debts[i].id===id)return state.debts[i];return null;}
