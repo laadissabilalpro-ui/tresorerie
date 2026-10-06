@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: dettes-gestion-2026-10 */
+   build: stable-dnd-2026-10 */
 (function(){
 "use strict";
 
@@ -338,7 +338,32 @@ async function sync(){
   state.firstSyncDone=true;
   updateSyncBadge();
 }
-var debSync=debounce(function(){sync().then(render);},320);
+/* ---- Rafraîchissements « de fond » (synchro, realtime, auto-refresh) ----
+   Un render complet pendant une saisie reconstruit le formulaire → montant/note perdus + flash blanc.
+   renderBg() : (1) jamais pendant une saisie (formulaire, modal, champ actif) → mis en attente ;
+   (2) seulement si les données ont réellement changé (signature) → plus de scintillement inutile. */
+function isUserEditing(){
+  if(state.modal||state.confirm||state.printPick||state.ticketView)return true;
+  if(state.view==="add"||state.view==="settings")return true;
+  var ae=document.activeElement;
+  return !!(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
+}
+function dataSig(){
+  var s=[state.code,state.view,state.movements.length];
+  for(var i=0;i<state.movements.length;i++){var m=state.movements[i];s.push(m.id.slice(0,6),m.date,m.montant,m.type,m.compte,(m.note||"").length,m._deleted?1:0);}
+  for(var j=0;j<state.debts.length;j++){var d=state.debts[j];s.push(d.id.slice(0,6),d.label,d.montant,d.day,d.settled_day||"",d._deleted?1:0);}
+  var st=state.settings;if(st)s.push(st.fond,st.soldesInit.especes,st.soldesInit.ca,st.soldesInit.revolut,st.dateInit);
+  try{s.push(JSON.stringify(state.jours));}catch(e){}
+  return s.join("|");
+}
+function renderBg(){
+  if(isUserEditing()){state.renderPending=true;return;}
+  var sig=dataSig();
+  if(sig===state.lastSig&&!state.renderPending){updateSyncBadge();return;}
+  state.renderPending=false;
+  render();
+}
+var debSync=debounce(function(){sync().then(renderBg);},320);
 function ensureRealtime(){
   if(!navigator.onLine||!state.code)return;
   try{
@@ -438,6 +463,7 @@ function msgScreen(title,body){return '<div class="msg-screen"><span class="bran
 
 function render(){
   app=app||document.getElementById("app");
+  if(state.view==="add"&&state.form&&!state.readOnly)captureForm(); // ne jamais perdre une saisie en cours
   if(!state.code){app.innerHTML=viewOnbCode();return;}
   if(!state.settings){
     if(!state.firstSyncDone&&navigator.onLine){app.innerHTML=loadingScreen("Récupération des données…");return;}
@@ -468,7 +494,9 @@ function render(){
   if(state.ticketView)html+=ticketModal();
   if(state.printPick)html+=printPickModal();
   app.innerHTML=html;
-  if(!state.readOnly && state.view==="add"){var mi=document.getElementById("montant");if(mi)setTimeout(function(){try{mi.focus();}catch(e){}},120);}
+  state.lastSig=dataSig();state.renderPending=false;
+  if(!state.readOnly && state.view==="add"){var mi=document.getElementById("montant");if(mi&&!mi.value)setTimeout(function(){try{mi.focus();}catch(e){}},120);} // focus auto seulement si le montant est encore vide
+  if(!state.readOnly && (state.view==="home"||state.view==="registre"))bindDetteDrag();
   if(state.modal){var f0=document.getElementById(state.modal.fields[0].id);if(f0)setTimeout(function(){try{f0.focus();}catch(e){}},120);}
   if(!state.readOnly && state.view==="movements"){var md=document.getElementById("mov_date");if(md)md.addEventListener("change",function(){var v=md.value||today();if(v>today())v=today();state.movDay=v;render();});}
   if(!state.readOnly && state.view==="add"){var mdf=document.getElementById("mov_datefield");if(mdf)mdf.addEventListener("change",function(){captureForm();if(state.form&&state.form.date>today())state.form.date=today();render();});}
@@ -896,30 +924,32 @@ function dettesPanelHTML(debts,ro){
   var list=debts.slice().sort(function(a,b){var as=a.settled_day?1:0,bs=b.settled_day?1:0;if(as!==bs)return as-bs;return a.day<b.day?-1:1;});
   if(!list.length){h+='<p class="muted">Aucune dette.</p>';}
   else{
-    var openIds=list.filter(function(x){return !x.settled_day;}).map(function(x){return x.id;});
+    var nbOpen=list.filter(function(x){return !x.settled_day;}).length,closed=false;
+    h+='<style>.dette-grip{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;color:var(--ink2);font-size:19px;line-height:1;padding:2px 8px 2px 0;margin-left:-2px;opacity:.55;}.dette-grip:active{cursor:grabbing;}.dette-row{transition:transform .16s ease;}.dette-placeholder{opacity:.3;}.dette-ghost .dette-grip{opacity:1;color:var(--accent);}</style>';
+    if(nbOpen>1)h+='<p class="field-hint" style="margin:0 0 2px;">Maintiens ⠿ et glisse pour changer l\'ordre.</p>';
+    h+='<div id="dettes-list">';
     list.forEach(function(d){
       var resteC=toC(d.montant),paidC=dettePaidC(d.label),initC=resteC+paidC;if(initC<=0)initC=resteC>0?resteC:1;
       var regle=!!d.settled_day||resteC<=0;
+      if(regle&&!closed){h+='</div>';closed=true;}
       var pct=regle?100:Math.max(0,Math.min(100,Math.round(paidC/initC*100)));
       var col=detteBarColor(pct);
-      h+='<div style="padding:11px 0;border-top:1px solid rgba(0,0,0,.06);">';
-      h+='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;"><span style="font-weight:700;">'+esc(d.label||"Dette")+(regle?' <span style="font-size:11px;font-weight:700;color:#2e9e5b;background:rgba(46,158,91,.13);padding:2px 7px;border-radius:8px;">Réglé</span>':'')+'</span><span class="num" style="font-weight:800;white-space:nowrap;color:'+col+';">'+pct+' %</span></div>';
+      h+='<div class="dette-row" data-id="'+d.id+'" style="padding:11px 0;border-top:1px solid rgba(0,0,0,.06);background:var(--card);">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;"><span style="font-weight:700;display:flex;align-items:center;gap:4px;min-width:0;">'+(regle||nbOpen<2?'':'<span class="dette-grip" aria-label="Déplacer">⠿</span>')+'<span style="min-width:0;">'+esc(d.label||"Dette")+'</span>'+(regle?' <span style="font-size:11px;font-weight:700;color:#2e9e5b;background:rgba(46,158,91,.13);padding:2px 7px;border-radius:8px;">Réglé</span>':'')+'</span><span class="num" style="font-weight:800;white-space:nowrap;color:'+col+';">'+pct+' %</span></div>';
       h+='<div style="height:9px;background:rgba(0,0,0,.08);border-radius:6px;overflow:hidden;margin:7px 0 5px;"><div style="height:100%;width:'+pct+'%;background:'+col+';"></div></div>';
       h+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2);"><span>'+formatNum(toE(paidC))+' € remboursés sur '+formatNum(toE(initC))+' €'+(regle?'':' · reste '+formatNum(toE(resteC))+' €')+'</span>';
       if(!ro){
         if(regle)h+='<button class="btn btn-ghost" style="padding:5px 10px;font-size:12px;white-space:nowrap;" data-act="delDette" data-arg="'+d.id+'" data-stop="1">Archiver</button>';
         else{
-          var oi=openIds.indexOf(d.id);
-          h+='<span style="display:flex;gap:5px;flex-shrink:0;align-items:center;">';
+          h+='<span style="display:flex;gap:6px;flex-shrink:0;align-items:center;">';
           h+='<button class="btn btn-secondary" style="padding:6px 11px;font-size:12.5px;" data-act="payDette" data-arg="'+d.id+'" data-stop="1">Payer</button>';
           h+='<button class="icon-btn small" data-act="editDette" data-arg="'+d.id+'" data-stop="1" aria-label="Modifier">✏️</button>';
-          h+='<button class="icon-btn small" data-act="detteUp" data-arg="'+d.id+'" data-stop="1" aria-label="Monter" style="font-weight:800;'+(oi<=0?'opacity:.25;pointer-events:none;':'')+'">↑</button>';
-          h+='<button class="icon-btn small" data-act="detteDown" data-arg="'+d.id+'" data-stop="1" aria-label="Descendre" style="font-weight:800;'+(oi===openIds.length-1?'opacity:.25;pointer-events:none;':'')+'">↓</button>';
           h+='<button class="icon-btn small" data-act="delDette" data-arg="'+d.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button></span>';
         }
       }
       h+='</div></div>';
     });
+    if(!closed)h+='</div>';
   }
   if(!ro)h+='<button class="btn btn-secondary full" style="margin-top:12px;" data-act="addDette">'+ic("plus")+'Ajouter une dette</button>';
   h+='</div>';
@@ -1293,7 +1323,7 @@ function commitMov(m){
     var proNom=(COMPTES[m.compte]||{}).nom||m.compte,amt=m.montant,dstAcct=m.compte,lbl=(m.note||"").trim()||"dépense perso";
     state.confirm={message:"Cette dépense ("+money(amt)+") sort de "+proNom+" (compte pro). C'était perso ? Je peux la couvrir avec ton argent perso (Espèces perso → "+proNom+") pour garder tes comptes justes.",danger:false,confirmLabel:"Oui, rééquilibrer",onYes:function(){state.confirm=null;var reeq={id:uuid(),date:m.date,ts:Date.now(),type:"TRANSFERT",compte:"especes",montant:amt,note:"T|R|especes|"+dstAcct+"|"+lbl,_dirty:true};commitMov(reeq);showToast("Rééquilibré depuis Espèces perso");}};
   }
-  render();sync().then(render);
+  render();sync().then(renderBg);
   if(!proposeReeq)showToast(m.dette_id?"Dette payée":(!isNew?"Mouvement modifié":"Mouvement enregistré"));
 }
 function submitMov(){
@@ -1330,7 +1360,7 @@ function deleteMov(id){
   state.confirm={message:"Supprimer ce mouvement ? Les soldes seront recalculés.",danger:true,confirmLabel:"Supprimer",onYes:function(){
     state.confirm=null;var m=findMov(id);if(m){m._deleted=true;m._dirty=false;if(m.dette_id){var dt=findDette(m.dette_id);if(dt){dt.montant=round2((dt.montant||0)+m.montant);dt.settled_day=null;dt._dirty=true;}}}
     saveCache();if(state.view==="add"){state.editId=null;state.form=null;state.view="home";}
-    render();sync().then(render);showToast("Mouvement supprimé");
+    render();sync().then(renderBg);showToast("Mouvement supprimé");
   }};
   render();
 }
@@ -1372,21 +1402,74 @@ function editDette(id){
   render();
 }
 function addDaysStr(s,n){var p=s.split("-");var d=new Date(+p[0],+p[1]-1,+p[2]+n);return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());}
-/* Réordonner = échanger la position dans la liste ; l'ordre d'affichage est porté par `day`
-   (tri croissant), donc on redistribue les days existants (dédoublonnés) sur le nouvel ordre. */
-function detteMove(id,dir){
+/* Réordonner : l'ordre d'affichage est porté par `day` (tri croissant) → on redistribue les days
+   existants (dédoublonnés) sur le nouvel ordre d'ids. */
+function detteReorder(ids){
   var open=activeDebts().filter(function(d){return !d.settled_day;}).sort(function(a,b){return a.day<b.day?-1:1;});
-  var i=-1;for(var k=0;k<open.length;k++)if(open[k].id===id){i=k;break;}
-  var j=i+dir;if(i<0||j<0||j>=open.length)return;
-  var arr=open.slice();var tmp=arr[i];arr[i]=arr[j];arr[j]=tmp;
   var days=open.map(function(d){return d.day;}).sort();
   for(var a=1;a<days.length;a++){if(days[a]<=days[a-1])days[a]=addDaysStr(days[a-1],1);}
-  for(var b=0;b<arr.length;b++){if(arr[b].day!==days[b]){arr[b].day=days[b];arr[b]._dirty=true;}}
-  saveCache();debSync();render();
+  var changed=false,pos=0;
+  for(var i=0;i<ids.length;i++){var d=findDette(ids[i]);if(!d||d.settled_day)continue;
+    if(d.day!==days[pos]){d.day=days[pos];d._dirty=true;changed=true;}pos++;}
+  if(changed){saveCache();debSync();}
+  render();
+}
+/* ---- Glisser-déposer des dettes (inspiré de SortableJS, sans dépendance) ----
+   Pointer Events (souris + tactile), poignée ⠿ en touch-action:none (sinon iOS scrolle),
+   « carte » fantôme fixe qui suit le doigt, emplacement en semi-transparence,
+   voisins qui glissent en animation FLIP, dépôt animé puis sauvegarde de l'ordre. */
+function bindDetteDrag(){
+  var list=document.getElementById("dettes-list");if(!list)return;
+  var grips=list.querySelectorAll(".dette-grip");
+  for(var i=0;i<grips.length;i++)grips[i].addEventListener("pointerdown",detteDragStart);
+}
+function detteDragStart(e){
+  if(e.button!==undefined&&e.button!==0)return;
+  var grip=e.currentTarget,row=grip.closest(".dette-row");if(!row)return;
+  var list=row.parentNode;
+  e.preventDefault();
+  try{grip.setPointerCapture(e.pointerId);}catch(_){}
+  var r0=row.getBoundingClientRect(),startY=e.clientY,moved=false;
+  var ghost=row.cloneNode(true);
+  ghost.className="dette-row dette-ghost";
+  ghost.style.cssText="position:fixed;left:"+r0.left+"px;top:"+r0.top+"px;width:"+r0.width+"px;height:"+r0.height+"px;margin:0;padding:11px 0;z-index:1000;pointer-events:none;background:var(--card);border-radius:12px;box-shadow:0 14px 30px rgba(0,0,0,.22);transform:scale(1.02);transition:transform .12s,box-shadow .12s;border-top:none;box-sizing:border-box;";
+  document.body.appendChild(ghost);
+  row.classList.add("dette-placeholder");
+  try{if(navigator.vibrate)navigator.vibrate(8);}catch(_){}
+  function others(){return [].slice.call(list.querySelectorAll(".dette-row")).filter(function(x){return x!==row;});}
+  function flip(fn){
+    var rs=others(),before={};
+    rs.forEach(function(x){before[x.getAttribute("data-id")]=x.getBoundingClientRect().top;});
+    fn();
+    rs.forEach(function(x){var d=before[x.getAttribute("data-id")]-x.getBoundingClientRect().top;
+      if(d){x.style.transition="none";x.style.transform="translateY("+d+"px)";x.getBoundingClientRect();x.style.transition="transform .16s ease";x.style.transform="";}});
+  }
+  function onMove(ev){
+    var dy=ev.clientY-startY;if(Math.abs(dy)>3)moved=true;
+    ghost.style.transform="translateY("+dy+"px) scale(1.02)";
+    var cy=r0.top+r0.height/2+dy,rs=others(),target=null;
+    for(var i=0;i<rs.length;i++){var b=rs[i].getBoundingClientRect();if(cy<b.top+b.height/2){target=rs[i];break;}}
+    if(target){if(row.nextElementSibling!==target)flip(function(){list.insertBefore(row,target);});}
+    else if(list.lastElementChild!==row)flip(function(){list.appendChild(row);});
+  }
+  function onUp(){
+    grip.removeEventListener("pointermove",onMove);grip.removeEventListener("pointerup",onUp);grip.removeEventListener("pointercancel",onUp);
+    var rf=row.getBoundingClientRect();
+    ghost.style.transition="transform .18s ease,box-shadow .18s";
+    ghost.style.transform="translateY("+(rf.top-r0.top)+"px) scale(1)";
+    ghost.style.boxShadow="0 2px 8px rgba(0,0,0,.10)";
+    setTimeout(function(){
+      if(ghost.parentNode)ghost.parentNode.removeChild(ghost);
+      row.classList.remove("dette-placeholder");
+      var ids=[].slice.call(list.querySelectorAll(".dette-row")).map(function(x){return x.getAttribute("data-id");});
+      if(moved)detteReorder(ids);
+    },190);
+  }
+  grip.addEventListener("pointermove",onMove);grip.addEventListener("pointerup",onUp);grip.addEventListener("pointercancel",onUp);
 }
 function settleDette(id){
   var d=findDette(id);if(d){d.settled_day=today();d._dirty=true;}
-  saveCache();render();sync().then(render);showToast("Dette réglée");
+  saveCache();render();sync().then(renderBg);showToast("Dette réglée");
 }
 function payDette(id){var d=findDette(id);if(!d)return;openAdd({type:"REMB",dette_id:id,compte:"especes",montant:String(round2(d.montant)).replace(".",",")});}
 function ensureTesseract(){
@@ -1647,7 +1730,7 @@ function delDette(id){
   var d0=findDette(id);var isReg=!!(d0&&(d0.settled_day||toC(d0.montant)<=0));
   state.confirm={message:isReg?"Archiver cette dette réglée ?":"Supprimer cette dette ?",danger:!isReg,confirmLabel:isReg?"Archiver":"Supprimer",onYes:function(){
     state.confirm=null;var d=findDette(id);if(d){d._deleted=true;d._dirty=false;}
-    saveCache();render();sync().then(render);showToast(isReg?"Dette archivée":"Dette supprimée");
+    saveCache();render();sync().then(renderBg);showToast(isReg?"Dette archivée":"Dette supprimée");
   }};
   render();
 }
@@ -1708,21 +1791,19 @@ document.addEventListener("click",function(ev){
   if(act==="editMarge"){editMarge(arg);return;}
   if(act==="addDette"){addDette();return;}
   if(act==="editDette"){editDette(arg);return;}
-  if(act==="detteUp"){detteMove(arg,-1);return;}
-  if(act==="detteDown"){detteMove(arg,1);return;}
   if(act==="settleDette"){settleDette(arg);return;}
   if(act==="delDette"){delDette(arg);return;}
-  if(act==="saveSettings"){var next=readSettingsForm();saveSettings(next);state.view="home";render();sync().then(render);showToast("Réglages enregistrés");return;}
+  if(act==="saveSettings"){var next=readSettingsForm();saveSettings(next);state.view="home";render();sync().then(renderBg);showToast("Réglages enregistrés");return;}
   if(act==="copyResume"){copyText(buildResumeMentor(state.settings,activeMovs(),state.resumeDay||today()));return;}
   if(act==="copyCourt"){copyText(buildResumeCourt(state.settings,activeMovs(),state.resumeDay||today()));return;}
   if(act==="resumeToday"){state.resumeDay=today();render();return;}
   if(act==="confirmYes"){if(state.confirm&&state.confirm.onYes)state.confirm.onYes();else{state.confirm=null;render();}return;}
   if(act==="confirmNo"){if(ev.target===el){state.confirm=null;render();}return;}
-  if(act==="modalConfirm"){if(!state.modal)return;var vals={};state.modal.fields.forEach(function(f){var e=document.getElementById(f.id);vals[f.id]=e?e.value:"";});var r=state.modal.onConfirm(vals);if(r===false)return;state.modal=null;render();sync().then(render);return;}
+  if(act==="modalConfirm"){if(!state.modal)return;var vals={};state.modal.fields.forEach(function(f){var e=document.getElementById(f.id);vals[f.id]=e?e.value:"";});var r=state.modal.onConfirm(vals);if(r===false)return;state.modal=null;render();sync().then(renderBg);return;}
   if(act==="modalCancel"){if(ev.target===el){state.modal=null;render();}return;}
-  if(act==="onbCode"){var v=(document.getElementById("onb_code")||{}).value||"";v=v.trim();if(!v){showToast("Saisis un code");return;}state.code=v;lset(state.readOnly?"treso:ro_code":"treso:code",v);loadCache();state.firstSyncDone=false;render();sync().then(function(){render();ensureRealtime();});return;}
-  if(act==="onbSettings"){var ns=readSettingsForm();saveSettings(ns);state.view="home";render();sync().then(render);return;}
-  if(act==="retrySync"){render();sync().then(function(){render();ensureRealtime();});return;}
+  if(act==="onbCode"){var v=(document.getElementById("onb_code")||{}).value||"";v=v.trim();if(!v){showToast("Saisis un code");return;}state.code=v;lset(state.readOnly?"treso:ro_code":"treso:code",v);loadCache();state.firstSyncDone=false;render();sync().then(function(){renderBg();ensureRealtime();});return;}
+  if(act==="onbSettings"){var ns=readSettingsForm();saveSettings(ns);state.view="home";render();sync().then(renderBg);return;}
+  if(act==="retrySync"){render();sync().then(function(){renderBg();ensureRealtime();});return;}
   if(act==="changeCode"){state.code="";lset("treso:code","");state.settings=null;state.movements=[];state.debts=[];state.jours={};state.joursDirty={};render();return;}
 });
 
@@ -1734,7 +1815,7 @@ document.addEventListener("keydown",function(ev){
 });
 
 /* ===================== CONNECTIVITE ===================== */
-window.addEventListener("online",function(){updateSyncBadge();sync().then(function(){render();ensureRealtime();});});
+window.addEventListener("online",function(){updateSyncBadge();sync().then(function(){renderBg();ensureRealtime();});});
 window.addEventListener("offline",function(){updateSyncBadge();});
 
 /* ===================== DEMARRAGE ===================== */
@@ -1765,7 +1846,7 @@ function start(){
   state.ready=true;
   render();
   if(!state.readOnly && /scan/i.test(location.hash||"")) setTimeout(function(){var el=document.getElementById("set_visionkey");if(el&&el.scrollIntoView){try{el.scrollIntoView({block:"center"});}catch(e){}}},350);
-  if(state.code){sync().then(function(){render();ensureRealtime();});}
+  if(state.code){sync().then(function(){renderBg();ensureRealtime();});}
 }
 if(window.supabase||document.readyState!=="loading"){start();}else{window.addEventListener("DOMContentLoaded",start);}
 
@@ -1781,7 +1862,7 @@ if("serviceWorker" in navigator){
 
 /* Rafraîchissement automatique des données (surtout pour la consultation du mentor qui ouvre via le lien) :
    au retour sur l'onglet (visibilitychange/focus), au retour du réseau, et toutes les 60 s tant que l'onglet est visible. */
-function autoRefresh(){ if(!document.hidden && state.code && state.ready){ try{ sync().then(function(){render();}); }catch(e){} } }
+function autoRefresh(){ if(!document.hidden && state.code && state.ready){ try{ sync().then(renderBg); }catch(e){} } }
 document.addEventListener("visibilitychange",autoRefresh);
 window.addEventListener("focus",autoRefresh);
 window.addEventListener("online",autoRefresh);
