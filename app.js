@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: stable-dnd-2026-10 */
+   build: stable-dnd2-2026-10 */
 (function(){
 "use strict";
 
@@ -344,7 +344,7 @@ async function sync(){
    (2) seulement si les données ont réellement changé (signature) → plus de scintillement inutile. */
 function isUserEditing(){
   if(state.modal||state.confirm||state.printPick||state.ticketView)return true;
-  if(state.view==="add"||state.view==="settings")return true;
+  if(state.view==="add"||state.view==="settings"||state.view==="detteedit"||state.dragging)return true;
   var ae=document.activeElement;
   return !!(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
 }
@@ -483,12 +483,13 @@ function render(){
   else if(state.view==="print")html+=viewPrint();
   else if(state.view==="calendrier")html+=viewCalendrier();
   else if(state.view==="printcal")html+=viewPrintCal();
+  else if(state.view==="detteedit")html+=viewDetteEdit();
   else if(state.view==="perso")html+=viewPerso();
   else if(state.view==="stock")html+=viewStock();
   else if(state.view==="settings")html+=viewSettings();
   else html+=viewHome();
   html+="</main>";
-  if(!state.readOnly && state.view!=="add" && state.view!=="settings" && state.view!=="print" && state.view!=="printcal")html+=bottomNav();
+  if(!state.readOnly && state.view!=="add" && state.view!=="settings" && state.view!=="print" && state.view!=="printcal" && state.view!=="detteedit")html+=bottomNav();
   if(state.confirm)html+=confirmModal();
   if(state.modal)html+=modalInput();
   if(state.ticketView)html+=ticketModal();
@@ -503,8 +504,8 @@ function render(){
 }
 
 function header(){
-  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",stock:"Stock",settings:"Réglages",print:"Feuille de caisse",printcal:"Calendrier du mois",calendrier:"Calendrier"};
-  var showBack=(!state.readOnly)&&(state.view==="add"||state.view==="settings"||state.view==="print"||state.view==="printcal");
+  var titles={home:"Trésorerie",add:(state.editId?"Modifier le mouvement":"Nouveau mouvement"),movements:"Mouvements du jour",resume:"Résumé journalier",registre:"Registre",perso:"Mon argent perso",stock:"Stock",settings:"Réglages",print:"Feuille de caisse",printcal:"Calendrier du mois",calendrier:"Calendrier",detteedit:"Modifier la dette"};
+  var showBack=(!state.readOnly)&&(state.view==="add"||state.view==="settings"||state.view==="print"||state.view==="printcal"||state.view==="detteedit");
   var left=showBack?'<button class="icon-btn" data-act="back" aria-label="Retour">'+ic("home")+'</button>':'<div class="header-brand"><span class="brand-dot"></span></div>';
   var right;
   if(state.readOnly)right=syncBadgeHTML()+'<span class="ro-badge">Consultation</span>';
@@ -926,7 +927,7 @@ function dettesPanelHTML(debts,ro){
   else{
     var nbOpen=list.filter(function(x){return !x.settled_day;}).length,closed=false;
     h+='<style>.dette-grip{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;color:var(--ink2);font-size:19px;line-height:1;padding:2px 8px 2px 0;margin-left:-2px;opacity:.55;}.dette-grip:active{cursor:grabbing;}.dette-row{transition:transform .16s ease;}.dette-placeholder{opacity:.3;}.dette-ghost .dette-grip{opacity:1;color:var(--accent);}</style>';
-    if(nbOpen>1)h+='<p class="field-hint" style="margin:0 0 2px;">Maintiens ⠿ et glisse pour changer l\'ordre.</p>';
+    h+='<p class="field-hint" style="margin:0 0 2px;">Touche une dette pour la modifier'+(nbOpen>1?' · maintiens ⠿ et glisse pour changer l\'ordre':'')+'.</p>';
     h+='<div id="dettes-list">';
     list.forEach(function(d){
       var resteC=toC(d.montant),paidC=dettePaidC(d.label),initC=resteC+paidC;if(initC<=0)initC=resteC>0?resteC:1;
@@ -934,7 +935,7 @@ function dettesPanelHTML(debts,ro){
       if(regle&&!closed){h+='</div>';closed=true;}
       var pct=regle?100:Math.max(0,Math.min(100,Math.round(paidC/initC*100)));
       var col=detteBarColor(pct);
-      h+='<div class="dette-row" data-id="'+d.id+'" style="padding:11px 0;border-top:1px solid rgba(0,0,0,.06);background:var(--card);">';
+      h+='<div class="dette-row" data-id="'+d.id+'"'+(ro?'':' data-act="openDette" data-arg="'+d.id+'"')+' style="padding:11px 0;border-top:1px solid rgba(0,0,0,.06);background:var(--card);'+(ro?'':'cursor:pointer;')+'">';
       h+='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;"><span style="font-weight:700;display:flex;align-items:center;gap:4px;min-width:0;">'+(regle||nbOpen<2?'':'<span class="dette-grip" aria-label="Déplacer">⠿</span>')+'<span style="min-width:0;">'+esc(d.label||"Dette")+'</span>'+(regle?' <span style="font-size:11px;font-weight:700;color:#2e9e5b;background:rgba(46,158,91,.13);padding:2px 7px;border-radius:8px;">Réglé</span>':'')+'</span><span class="num" style="font-weight:800;white-space:nowrap;color:'+col+';">'+pct+' %</span></div>';
       h+='<div style="height:9px;background:rgba(0,0,0,.08);border-radius:6px;overflow:hidden;margin:7px 0 5px;"><div style="height:100%;width:'+pct+'%;background:'+col+';"></div></div>';
       h+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2);"><span>'+formatNum(toE(paidC))+' € remboursés sur '+formatNum(toE(initC))+' €'+(regle?'':' · reste '+formatNum(toE(resteC))+' €')+'</span>';
@@ -943,7 +944,6 @@ function dettesPanelHTML(debts,ro){
         else{
           h+='<span style="display:flex;gap:6px;flex-shrink:0;align-items:center;">';
           h+='<button class="btn btn-secondary" style="padding:6px 11px;font-size:12.5px;" data-act="payDette" data-arg="'+d.id+'" data-stop="1">Payer</button>';
-          h+='<button class="icon-btn small" data-act="editDette" data-arg="'+d.id+'" data-stop="1" aria-label="Modifier">✏️</button>';
           h+='<button class="icon-btn small" data-act="delDette" data-arg="'+d.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button></span>';
         }
       }
@@ -1389,17 +1389,39 @@ function renameDettePayments(oldL,newL){
     if(!m._deleted&&m.note===pref){m.note="Paiement dette : "+newL;m._dirty=true;n++;}}
   return n;
 }
+/* Page de modification d'une dette (ouverte en touchant la ligne, comme un mouvement du jour). */
 function editDette(id){
   var d=findDette(id);if(!d)return;
-  state.modal={title:"Modifier la dette",fields:[{id:"d_label",label:"À qui / quoi",value:d.label||"",placeholder:"ex : Fournisseur A"},{id:"d_montant",label:"Reste à payer (€)",num:true,value:String(round2(d.montant)).replace(".","," ),placeholder:"0,00"}],confirmLabel:"Enregistrer",onConfirm:function(v){
-    var mt=parseMontant(v.d_montant);if(!(mt>0)){showToast("Montant invalide");return false;}
-    var newL=(v.d_label||"").trim()||"Dette";
-    var renamed=renameDettePayments(d.label,newL);
-    d.label=newL;d.montant=round2(mt);d._dirty=true;
-    saveCache();debSync();
-    showToast(renamed?"Dette modifiée ("+renamed+" paiement"+(renamed>1?"s":"")+" relié"+(renamed>1?"s":"")+")":"Dette modifiée");
-  }};
-  render();
+  state.detteEditId=id;state.detteEditBack=(state.view==="registre"?"registre":"home");state.view="detteedit";
+  render();window.scrollTo(0,0);
+}
+function viewDetteEdit(){
+  var d=findDette(state.detteEditId);
+  if(!d||d._deleted){state.view=state.detteEditBack||"home";return state.view==="registre"?viewRegistre():viewHome();}
+  var resteC=toC(d.montant),paidC=dettePaidC(d.label),initC=resteC+paidC;
+  var h='<div class="view">';
+  h+='<div class="card">';
+  h+='<p class="section-title flush">À qui / quoi</p>';
+  h+='<input id="de_label" type="text" value="'+esc(d.label||"")+'" placeholder="ex : Fournisseur A" autocomplete="off" style="width:100%;padding:12px 14px;border:1.5px solid rgba(0,0,0,.12);border-radius:12px;background:var(--card);font-family:inherit;font-size:16px;font-weight:700;color:var(--ink);">';
+  h+='<p class="section-title">Reste à payer</p><div class="amount-field"><input id="de_montant" class="amount-input num" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="'+esc(String(round2(d.montant)).replace(".",","))+'"><span class="amount-cur">€</span></div>';
+  h+='<p class="field-hint">'+formatNum(toE(paidC))+' € déjà remboursés'+(paidC>0?' · total initial '+formatNum(toE(initC))+' €':'')+'. Si tu renommes, les paiements déjà enregistrés suivent le nouveau nom.</p>';
+  h+='</div>';
+  h+='<button class="btn btn-primary btn-lg full" data-act="detteEditSave">'+ic("check")+'Enregistrer</button>';
+  h+='<button class="btn btn-secondary full" data-act="payDette" data-arg="'+d.id+'">Enregistrer un paiement</button>';
+  h+='<button class="btn btn-ghost full" data-act="delDette" data-arg="'+d.id+'">'+ic("trash")+' Supprimer cette dette</button>';
+  h+='</div>';
+  return h;
+}
+function detteEditSave(){
+  var d=findDette(state.detteEditId);if(!d)return;
+  var li=document.getElementById("de_label"),mi=document.getElementById("de_montant");
+  var mt=parseMontant(mi?mi.value:"");if(!(mt>0)){showToast("Montant invalide");return;}
+  var newL=((li?li.value:"")||"").trim()||"Dette";
+  var renamed=renameDettePayments(d.label,newL);
+  d.label=newL;d.montant=round2(mt);d._dirty=true;
+  saveCache();debSync();
+  state.view=state.detteEditBack||"home";render();
+  showToast(renamed?"Dette modifiée ("+renamed+" paiement"+(renamed>1?"s":"")+" relié"+(renamed>1?"s":"")+")":"Dette modifiée");
 }
 function addDaysStr(s,n){var p=s.split("-");var d=new Date(+p[0],+p[1]-1,+p[2]+n);return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());}
 /* Réordonner : l'ordre d'affichage est porté par `day` (tri croissant) → on redistribue les days
@@ -1425,11 +1447,14 @@ function bindDetteDrag(){
 }
 function detteDragStart(e){
   if(e.button!==undefined&&e.button!==0)return;
+  if(state.dragging)return;
   var grip=e.currentTarget,row=grip.closest(".dette-row");if(!row)return;
-  var list=row.parentNode;
-  e.preventDefault();
-  try{grip.setPointerCapture(e.pointerId);}catch(_){}
+  var list=row.parentNode,pid=e.pointerId;
+  e.preventDefault();e.stopPropagation();
+  state.dragging=true;
   var r0=row.getBoundingClientRect(),startY=e.clientY,moved=false;
+  var blockScroll=function(ev){ev.preventDefault();}; // iOS : empêche le défilement de la page pendant le glisser
+  document.addEventListener("touchmove",blockScroll,{passive:false});
   var ghost=row.cloneNode(true);
   ghost.className="dette-row dette-ghost";
   ghost.style.cssText="position:fixed;left:"+r0.left+"px;top:"+r0.top+"px;width:"+r0.width+"px;height:"+r0.height+"px;margin:0;padding:11px 0;z-index:1000;pointer-events:none;background:var(--card);border-radius:12px;box-shadow:0 14px 30px rgba(0,0,0,.22);transform:scale(1.02);transition:transform .12s,box-shadow .12s;border-top:none;box-sizing:border-box;";
@@ -1445,6 +1470,7 @@ function detteDragStart(e){
       if(d){x.style.transition="none";x.style.transform="translateY("+d+"px)";x.getBoundingClientRect();x.style.transition="transform .16s ease";x.style.transform="";}});
   }
   function onMove(ev){
+    if(ev.pointerId!==undefined&&pid!==undefined&&ev.pointerId!==pid)return;
     var dy=ev.clientY-startY;if(Math.abs(dy)>3)moved=true;
     ghost.style.transform="translateY("+dy+"px) scale(1.02)";
     var cy=r0.top+r0.height/2+dy,rs=others(),target=null;
@@ -1452,20 +1478,26 @@ function detteDragStart(e){
     if(target){if(row.nextElementSibling!==target)flip(function(){list.insertBefore(row,target);});}
     else if(list.lastElementChild!==row)flip(function(){list.appendChild(row);});
   }
-  function onUp(){
-    grip.removeEventListener("pointermove",onMove);grip.removeEventListener("pointerup",onUp);grip.removeEventListener("pointercancel",onUp);
+  function onUp(ev){
+    if(ev&&ev.pointerId!==undefined&&pid!==undefined&&ev.pointerId!==pid)return;
+    document.removeEventListener("pointermove",onMove);document.removeEventListener("pointerup",onUp);document.removeEventListener("pointercancel",onUp);
+    document.removeEventListener("touchmove",blockScroll);
     var rf=row.getBoundingClientRect();
     ghost.style.transition="transform .18s ease,box-shadow .18s";
     ghost.style.transform="translateY("+(rf.top-r0.top)+"px) scale(1)";
     ghost.style.boxShadow="0 2px 8px rgba(0,0,0,.10)";
+    if(moved)state.suppressClickUntil=Date.now()+500; // un glisser ne doit pas ouvrir la page de la dette
     setTimeout(function(){
       if(ghost.parentNode)ghost.parentNode.removeChild(ghost);
       row.classList.remove("dette-placeholder");
+      state.dragging=false;
       var ids=[].slice.call(list.querySelectorAll(".dette-row")).map(function(x){return x.getAttribute("data-id");});
       if(moved)detteReorder(ids);
     },190);
   }
-  grip.addEventListener("pointermove",onMove);grip.addEventListener("pointerup",onUp);grip.addEventListener("pointercancel",onUp);
+  // écouteurs sur le document (pas sur la poignée) : la ligne change de place dans le DOM pendant le glisser,
+  // une capture de pointeur sur la poignée serait perdue → carte figée « en suspens ».
+  document.addEventListener("pointermove",onMove);document.addEventListener("pointerup",onUp);document.addEventListener("pointercancel",onUp);
 }
 function settleDette(id){
   var d=findDette(id);if(d){d.settled_day=today();d._dirty=true;}
@@ -1762,7 +1794,7 @@ document.addEventListener("click",function(ev){
   if(act==="calShift"){var cm=state.calMois||today().slice(0,7);var cy=+cm.slice(0,4),cmi=+cm.slice(5,7)-1+(+arg);var nd2=new Date(cy,cmi,1);var nmo=nd2.getFullYear()+"-"+pad(nd2.getMonth()+1);if(nmo>today().slice(0,7))nmo=today().slice(0,7);state.calMois=nmo;render();return;}
   if(act==="calDay"){state.movDay=arg;state.view="movements";render();return;}
   if(act==="settings"){state.view="settings";render();return;}
-  if(act==="back"){var wasPrint=(state.view==="print"||state.view==="printcal");state.editId=null;state.form=null;state.view=wasPrint?"registre":"home";render();return;}
+  if(act==="back"){var wasPrint=(state.view==="print"||state.view==="printcal"),wasDette=(state.view==="detteedit");state.editId=null;state.form=null;state.view=wasDette?(state.detteEditBack||"home"):(wasPrint?"registre":"home");render();return;}
   if(act==="add"){openAdd();return;}
   if(act==="quick"){openAdd({type:"VENTE",compte:arg});return;}
   if(act==="type"){captureForm();state.form.type=arg;if(arg==="REMISE")state.form.compte="especes";else if(arg==="TRANSFERT"){if(!state.form.nature)state.form.nature="S";if(!state.form.src)state.form.src="especes";if(!state.form.dst||state.form.dst===state.form.src)state.form.dst=(state.form.src==="especes"?"ca":"especes");}else if((arg==="PERSO"||arg==="RETRAIT")){if(state.form.compte==="ca"||ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";}else if((arg==="VENTE"||arg==="REMB"||arg==="ENTREE")&&ORDRE_COMPTES.indexOf(state.form.compte)<0)state.form.compte="especes";render();return;}
@@ -1790,7 +1822,9 @@ document.addEventListener("click",function(ev){
   if(act==="delMov"){deleteMov(arg);return;}
   if(act==="editMarge"){editMarge(arg);return;}
   if(act==="addDette"){addDette();return;}
+  if(act==="openDette"){if(state.suppressClickUntil&&Date.now()<state.suppressClickUntil)return;editDette(arg);return;}
   if(act==="editDette"){editDette(arg);return;}
+  if(act==="detteEditSave"){detteEditSave();return;}
   if(act==="settleDette"){settleDette(arg);return;}
   if(act==="delDette"){delDette(arg);return;}
   if(act==="saveSettings"){var next=readSettingsForm();saveSettings(next);state.view="home";render();sync().then(renderBg);showToast("Réglages enregistrés");return;}
