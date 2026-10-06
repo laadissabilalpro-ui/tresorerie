@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: date-mouvement-2026-09 */
+   build: dettes-gestion-2026-10 */
 (function(){
 "use strict";
 
@@ -896,6 +896,7 @@ function dettesPanelHTML(debts,ro){
   var list=debts.slice().sort(function(a,b){var as=a.settled_day?1:0,bs=b.settled_day?1:0;if(as!==bs)return as-bs;return a.day<b.day?-1:1;});
   if(!list.length){h+='<p class="muted">Aucune dette.</p>';}
   else{
+    var openIds=list.filter(function(x){return !x.settled_day;}).map(function(x){return x.id;});
     list.forEach(function(d){
       var resteC=toC(d.montant),paidC=dettePaidC(d.label),initC=resteC+paidC;if(initC<=0)initC=resteC>0?resteC:1;
       var regle=!!d.settled_day||resteC<=0;
@@ -907,7 +908,15 @@ function dettesPanelHTML(debts,ro){
       h+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2);"><span>'+formatNum(toE(paidC))+' € remboursés sur '+formatNum(toE(initC))+' €'+(regle?'':' · reste '+formatNum(toE(resteC))+' €')+'</span>';
       if(!ro){
         if(regle)h+='<button class="btn btn-ghost" style="padding:5px 10px;font-size:12px;white-space:nowrap;" data-act="delDette" data-arg="'+d.id+'" data-stop="1">Archiver</button>';
-        else h+='<span style="display:flex;gap:6px;flex-shrink:0;"><button class="btn btn-secondary" style="padding:6px 11px;font-size:12.5px;" data-act="payDette" data-arg="'+d.id+'" data-stop="1">Payer</button><button class="icon-btn small" data-act="delDette" data-arg="'+d.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button></span>';
+        else{
+          var oi=openIds.indexOf(d.id);
+          h+='<span style="display:flex;gap:5px;flex-shrink:0;align-items:center;">';
+          h+='<button class="btn btn-secondary" style="padding:6px 11px;font-size:12.5px;" data-act="payDette" data-arg="'+d.id+'" data-stop="1">Payer</button>';
+          h+='<button class="icon-btn small" data-act="editDette" data-arg="'+d.id+'" data-stop="1" aria-label="Modifier">✏️</button>';
+          h+='<button class="icon-btn small" data-act="detteUp" data-arg="'+d.id+'" data-stop="1" aria-label="Monter" style="font-weight:800;'+(oi<=0?'opacity:.25;pointer-events:none;':'')+'">↑</button>';
+          h+='<button class="icon-btn small" data-act="detteDown" data-arg="'+d.id+'" data-stop="1" aria-label="Descendre" style="font-weight:800;'+(oi===openIds.length-1?'opacity:.25;pointer-events:none;':'')+'">↓</button>';
+          h+='<button class="icon-btn small" data-act="delDette" data-arg="'+d.id+'" data-stop="1" aria-label="Supprimer">'+ic("trash")+'</button></span>';
+        }
       }
       h+='</div></div>';
     });
@@ -1341,6 +1350,40 @@ function addDette(){
   }};
   render();
 }
+/* Renommer une dette casse le lien avec ses paiements (dettePaidC matche la note exacte
+   « Paiement dette : <label> ») → on renomme les notes des paiements EN MÊME TEMPS. */
+function renameDettePayments(oldL,newL){
+  if(!oldL||oldL===newL)return 0;
+  var pref="Paiement dette : "+oldL,n=0;
+  for(var i=0;i<state.movements.length;i++){var m=state.movements[i];
+    if(!m._deleted&&m.note===pref){m.note="Paiement dette : "+newL;m._dirty=true;n++;}}
+  return n;
+}
+function editDette(id){
+  var d=findDette(id);if(!d)return;
+  state.modal={title:"Modifier la dette",fields:[{id:"d_label",label:"À qui / quoi",value:d.label||"",placeholder:"ex : Fournisseur A"},{id:"d_montant",label:"Reste à payer (€)",num:true,value:String(round2(d.montant)).replace(".","," ),placeholder:"0,00"}],confirmLabel:"Enregistrer",onConfirm:function(v){
+    var mt=parseMontant(v.d_montant);if(!(mt>0)){showToast("Montant invalide");return false;}
+    var newL=(v.d_label||"").trim()||"Dette";
+    var renamed=renameDettePayments(d.label,newL);
+    d.label=newL;d.montant=round2(mt);d._dirty=true;
+    saveCache();debSync();
+    showToast(renamed?"Dette modifiée ("+renamed+" paiement"+(renamed>1?"s":"")+" relié"+(renamed>1?"s":"")+")":"Dette modifiée");
+  }};
+  render();
+}
+function addDaysStr(s,n){var p=s.split("-");var d=new Date(+p[0],+p[1]-1,+p[2]+n);return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());}
+/* Réordonner = échanger la position dans la liste ; l'ordre d'affichage est porté par `day`
+   (tri croissant), donc on redistribue les days existants (dédoublonnés) sur le nouvel ordre. */
+function detteMove(id,dir){
+  var open=activeDebts().filter(function(d){return !d.settled_day;}).sort(function(a,b){return a.day<b.day?-1:1;});
+  var i=-1;for(var k=0;k<open.length;k++)if(open[k].id===id){i=k;break;}
+  var j=i+dir;if(i<0||j<0||j>=open.length)return;
+  var arr=open.slice();var tmp=arr[i];arr[i]=arr[j];arr[j]=tmp;
+  var days=open.map(function(d){return d.day;}).sort();
+  for(var a=1;a<days.length;a++){if(days[a]<=days[a-1])days[a]=addDaysStr(days[a-1],1);}
+  for(var b=0;b<arr.length;b++){if(arr[b].day!==days[b]){arr[b].day=days[b];arr[b]._dirty=true;}}
+  saveCache();debSync();render();
+}
 function settleDette(id){
   var d=findDette(id);if(d){d.settled_day=today();d._dirty=true;}
   saveCache();render();sync().then(render);showToast("Dette réglée");
@@ -1664,6 +1707,9 @@ document.addEventListener("click",function(ev){
   if(act==="delMov"){deleteMov(arg);return;}
   if(act==="editMarge"){editMarge(arg);return;}
   if(act==="addDette"){addDette();return;}
+  if(act==="editDette"){editDette(arg);return;}
+  if(act==="detteUp"){detteMove(arg,-1);return;}
+  if(act==="detteDown"){detteMove(arg,1);return;}
   if(act==="settleDette"){settleDette(arg);return;}
   if(act==="delDette"){delDette(arg);return;}
   if(act==="saveSettings"){var next=readSettingsForm();saveSettings(next);state.view="home";render();sync().then(render);showToast("Réglages enregistrés");return;}
