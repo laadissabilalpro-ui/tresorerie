@@ -1,6 +1,6 @@
 /* Trésorerie — moteur partagé par index.html (édition) et vue.html (consultation, lecture seule).
    Lecture seule via window.__TRESO_RO__ (vue.html) OU ?vue=/?lecture=/?c=.
-   build: stable-dnd2-2026-10 */
+   build: sortablejs-2026-10 */
 (function(){
 "use strict";
 
@@ -926,7 +926,7 @@ function dettesPanelHTML(debts,ro){
   if(!list.length){h+='<p class="muted">Aucune dette.</p>';}
   else{
     var nbOpen=list.filter(function(x){return !x.settled_day;}).length,closed=false;
-    h+='<style>.dette-grip{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;color:var(--ink2);font-size:19px;line-height:1;padding:2px 8px 2px 0;margin-left:-2px;opacity:.55;}.dette-grip:active{cursor:grabbing;}.dette-row{transition:transform .16s ease;}.dette-placeholder{opacity:.3;}.dette-ghost .dette-grip{opacity:1;color:var(--accent);}</style>';
+    h+='<style>.dette-grip{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;color:var(--ink2);font-size:19px;line-height:1;padding:2px 8px 2px 0;margin-left:-2px;opacity:.55;}.dette-grip:active{cursor:grabbing;}.dette-row{will-change:transform;}.dette-placeholder{opacity:.3;}.dette-chosen{background:var(--card);}.dette-drag{box-shadow:0 14px 30px rgba(0,0,0,.22)!important;border-radius:12px;background:var(--card)!important;border-top:none!important;opacity:1!important;padding-left:8px!important;padding-right:8px!important;box-sizing:border-box;}.dette-drag .dette-grip,.dette-ghost .dette-grip{opacity:1;color:var(--accent);}</style>';
     h+='<p class="field-hint" style="margin:0 0 2px;">Touche une dette pour la modifier'+(nbOpen>1?' · maintiens ⠿ et glisse pour changer l\'ordre':'')+'.</p>';
     h+='<div id="dettes-list">';
     list.forEach(function(d){
@@ -1440,10 +1440,48 @@ function detteReorder(ids){
    Pointer Events (souris + tactile), poignée ⠿ en touch-action:none (sinon iOS scrolle),
    « carte » fantôme fixe qui suit le doigt, emplacement en semi-transparence,
    voisins qui glissent en animation FLIP, dépôt animé puis sauvegarde de l'ordre. */
+/* SortableJS (référence du glisser-déposer : animations FLIP, swap intelligent, auto-scroll, mode tactile).
+   Chargé à la demande depuis jsDelivr (même CDN que Supabase → mis en cache hors-ligne par le service worker).
+   Si la librairie n'est pas (encore) disponible, le moteur maison ci-dessous prend le relais. */
+var SORTABLE_URL="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js";
+function ensureSortable(){
+  if(window.Sortable)return Promise.resolve();
+  if(state._sortP)return state._sortP;
+  state._sortP=new Promise(function(res,rej){
+    var s=document.createElement("script");s.src=SORTABLE_URL;s.async=true;
+    s.onload=function(){res();};s.onerror=function(){state._sortP=null;rej(new Error("sortable"));};
+    document.head.appendChild(s);
+  });
+  return state._sortP;
+}
 function bindDetteDrag(){
   var list=document.getElementById("dettes-list");if(!list)return;
-  var grips=list.querySelectorAll(".dette-grip");
-  for(var i=0;i<grips.length;i++)grips[i].addEventListener("pointerdown",detteDragStart);
+  if(window.Sortable){
+    if(list._sortable){try{list._sortable.destroy();}catch(e){}list._sortable=null;}
+    if(list.getAttribute("data-dnd")==="fallback"){ // retire les écouteurs du moteur maison
+      var gs=list.querySelectorAll(".dette-grip");for(var g=0;g<gs.length;g++){var cl=gs[g].cloneNode(true);gs[g].parentNode.replaceChild(cl,gs[g]);}
+    }
+    list.setAttribute("data-dnd","sortable");
+    list._sortable=Sortable.create(list,{
+      handle:".dette-grip",draggable:".dette-row",direction:"vertical",
+      animation:200,easing:"cubic-bezier(.2,.8,.2,1)",
+      forceFallback:true,fallbackOnBody:true,fallbackTolerance:3,fallbackClass:"dette-drag",
+      touchStartThreshold:4,delay:0,
+      ghostClass:"dette-placeholder",chosenClass:"dette-chosen",
+      onStart:function(){state.dragging=true;try{if(navigator.vibrate)navigator.vibrate(8);}catch(e){}},
+      onEnd:function(evt){
+        state.dragging=false;state.suppressClickUntil=Date.now()+500;
+        if(evt.oldIndex!==evt.newIndex){var ids=[].slice.call(list.querySelectorAll(".dette-row")).map(function(x){return x.getAttribute("data-id");});detteReorder(ids);}
+      }
+    });
+    return;
+  }
+  if(list.getAttribute("data-dnd")!=="fallback"){
+    list.setAttribute("data-dnd","fallback");
+    var grips=list.querySelectorAll(".dette-grip");
+    for(var i=0;i<grips.length;i++)grips[i].addEventListener("pointerdown",detteDragStart);
+  }
+  ensureSortable().then(function(){if(document.getElementById("dettes-list")===list)bindDetteDrag();}).catch(function(){});
 }
 function detteDragStart(e){
   if(e.button!==undefined&&e.button!==0)return;
@@ -1881,6 +1919,7 @@ function start(){
   render();
   if(!state.readOnly && /scan/i.test(location.hash||"")) setTimeout(function(){var el=document.getElementById("set_visionkey");if(el&&el.scrollIntoView){try{el.scrollIntoView({block:"center"});}catch(e){}}},350);
   if(state.code){sync().then(function(){renderBg();ensureRealtime();});}
+  if(!state.readOnly)setTimeout(function(){ensureSortable().catch(function(){});},1500); // pré-charge le glisser-déposer des dettes
 }
 if(window.supabase||document.readyState!=="loading"){start();}else{window.addEventListener("DOMContentLoaded",start);}
 
